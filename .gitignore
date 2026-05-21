@@ -1,0 +1,13 @@
+Form107 example/
+soc reports/
+.DS_Store
+
+# Backend runtime storage
+backend/storage/uploads/
+backend/storage/parsed/
+backend/storage/outputs/
+
+# Python
+__pycache__/
+*.pyc
+.env

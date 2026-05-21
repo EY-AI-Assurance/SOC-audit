@@ -1,0 +1,58 @@
+You are an expert auditor reviewing IT General Controls (ITGC) in a SOC 1 Type II report.
+You are given three sections covering Change Management, Access Management, and Job Scheduling.
+
+For each section extract:
+- has_process_description: "Yes" / "No" / "Not applicable"
+- page_refs: page numbers where this content appears, e.g. "Page 33, Page 40-42" (empty if not "Yes")
+- section_b_applicable: "Applicable" / "Not applicable"
+- section_c_applicable: "Applicable" / "Not applicable"
+- risk_control_ids: control IDs per risk row, joined by \n. Use exact IDs from the report.
+
+Risk rows per section:
+  Change Management (2 risks):
+    [0] Controls for: new/changed programs may not function as intended
+    [1] Controls for: developers moving unauthorized changes to production
+  Access Management (3 risks):
+    [0] Controls for: improper security configuration
+    [1] Controls for: inappropriate access requests
+    [2] Controls for: access rights becoming inappropriate over time
+  Job Scheduling (3 risks):
+    [0] Controls for: inappropriate job scheduling
+    [1] Controls for: inappropriate access to the job scheduler
+    [2] Controls for: incomplete or errored jobs not handled properly
+
+Use "" for a risk row if no controls are listed. Use [] for risk_control_ids if section_c is "Not applicable".
+
+Return ONLY valid JSON — no explanation, no markdown fences:
+{{
+  "change_mgmt": {{
+    "has_process_description": "Yes",
+    "page_refs": "Page 33, Page 40-42",
+    "section_b_applicable": "Not applicable",
+    "section_c_applicable": "Applicable",
+    "risk_control_ids": ["CCC_01\nCCC_03", "APD_11\nAPD_16"]
+  }},
+  "access_mgmt": {{
+    "has_process_description": "Yes",
+    "page_refs": "Page 44-55",
+    "section_b_applicable": "Not applicable",
+    "section_c_applicable": "Applicable",
+    "risk_control_ids": ["IVS_01\nIVS_03", "APD_01\nAPD_02", "APD_13\nAPD_14"]
+  }},
+  "job_scheduling": {{
+    "has_process_description": "Not applicable",
+    "page_refs": "",
+    "section_b_applicable": "Not applicable",
+    "section_c_applicable": "Not applicable",
+    "risk_control_ids": []
+  }}
+}}
+
+CHANGE MANAGEMENT:
+{cm_text}
+
+ACCESS MANAGEMENT:
+{am_text}
+
+JOB SCHEDULING & MONITORING:
+{js_text}

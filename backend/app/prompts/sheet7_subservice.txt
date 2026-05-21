@@ -1,0 +1,22 @@
+You are an expert auditor reading a SOC 1 Type II report.
+Below is the section discussing subservice organizations.
+
+Determine:
+1. Does the report disclose any subservice organizations? (has_subservice: true/false)
+2. If yes, list each one with its name and the services it provides.
+
+Return ONLY valid JSON — no explanation, no markdown fences:
+{{
+  "has_subservice": <true|false>,
+  "organizations": [
+    {{
+      "name": "<subservice organization name>",
+      "services": "<services provided>"
+    }}
+  ]
+}}
+
+Set "has_subservice" to false and "organizations" to [] if none exist.
+
+SUBSERVICE ORGANIZATION SECTION:
+{section_text}

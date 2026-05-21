@@ -1,0 +1,22 @@
+You are an expert auditor reading a SOC 1 Type II report.
+Below is the Complementary User Entity Controls (CUECs) section.
+
+Extract ALL CUECs listed. For each one:
+- objective_and_page: the control objective category and page reference as they appear
+  (e.g. "Organizational Controls Page 44", "Access Management Page 45")
+- description: the full CUEC text as stated in the report — do not summarize
+
+Return ONLY valid JSON — no explanation, no markdown fences:
+{{
+  "cuecs": [
+    {{
+      "objective_and_page": "<objective + page ref>",
+      "description": "<full CUEC description>"
+    }}
+  ]
+}}
+
+Return {{ "cuecs": [] }} if none found.
+
+CUEC SECTION:
+{section_text}

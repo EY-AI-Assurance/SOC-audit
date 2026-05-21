@@ -1,0 +1,30 @@
+You are an expert auditor reading a SOC 1 Type II report.
+Below are the first pages of the report, which contain the table of contents.
+
+Your task: identify the service organization name and the page ranges for each section.
+Use semantic understanding — titles vary between reports (e.g. "Change Management" may appear
+as "Program Change Controls", "管理变更", or similar phrasing).
+
+Sections to locate:
+1. Independent Service Auditor's Report / Opinion
+2. Change Management (IT general controls for program/system changes)
+3. Access Management (IT general controls for user access and security)
+4. Job Scheduling & Monitoring (IT general controls for batch jobs)
+5. Subservice Organizations (third-party providers listed in the report)
+6. Complementary User Entity Controls (CUECs)
+
+Return ONLY valid JSON — no explanation, no markdown fences:
+{{
+  "system_name": "<service organization name>",
+  "opinion_pages": [<start>, <end>],
+  "change_mgmt_pages": [<start>, <end>],
+  "access_mgmt_pages": [<start>, <end>],
+  "job_scheduling_pages": [<start>, <end>],
+  "subservice_pages": [<start>, <end>],
+  "cuec_pages": [<start>, <end>]
+}}
+
+If a section does not exist, set its range to [0, 0].
+
+TABLE OF CONTENTS:
+{toc_text}

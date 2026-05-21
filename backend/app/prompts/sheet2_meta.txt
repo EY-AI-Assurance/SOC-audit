@@ -1,0 +1,15 @@
+You are an expert auditor reading a SOC 1 Type II report.
+Below is the auditor's opinion section.
+
+Extract:
+1. report_name — the full official title of the SOC 1 report as stated in the document.
+2. period — the exact audit coverage period (e.g. "October 1, 2024 to September 30, 2025").
+
+Return ONLY valid JSON — no explanation, no markdown fences:
+{{
+  "report_name": "<full report title>",
+  "period": "<coverage period>"
+}}
+
+REPORT TEXT:
+{section_text}
