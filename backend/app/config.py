@@ -4,11 +4,10 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # ── Dify API ──────────────────────────────────────────────────────────────
-    # Fill these in once the EY Dify endpoint is confirmed.
-    dify_api_url: str = "https://your-dify-endpoint/v1"
-    dify_api_key: str = ""
-    dify_call_mode: str = "completion"  # "completion" | "chat" | "workflow"
+    # ── LLM API (currently Bailian; swap dify_client.py to switch providers) ──
+    bailian_api_key: str = ""
+    bailian_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    bailian_model: str = "qwen-turbo"
 
     # ── Paths ─────────────────────────────────────────────────────────────────
     root_dir: Path = Path(__file__).parent.parent
@@ -17,7 +16,7 @@ class Settings(BaseSettings):
     parsed_dir: Path = storage_dir / "parsed"
     outputs_dir: Path = storage_dir / "outputs"
     template_path: Path = (
-        root_dir.parent / "Form107 example" / "Form 107-A Appendices (CN) (1).xlsx"
+        root_dir.parent.parent / "Form 107-A Appendices (CN).xlsx"
     )
     prompts_dir: Path = Path(__file__).parent / "prompts"
 
@@ -27,7 +26,10 @@ class Settings(BaseSettings):
     # ── CORS ──────────────────────────────────────────────────────────────────
     cors_origins: list[str] = ["http://localhost:3000"]
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": str(Path(__file__).parent.parent / ".env"),
+        "env_file_encoding": "utf-8",
+    }
 
 
 settings = Settings()

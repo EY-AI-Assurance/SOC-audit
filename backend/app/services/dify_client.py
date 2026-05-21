@@ -1,54 +1,42 @@
 """
-Dify API client — stub.
-
-The public interface (call / call_json) is stable.
-Fill in _completion / _chat / _workflow once the EY Dify endpoint is confirmed.
+LLM client — currently wired to Alibaba Bailian (OpenAI-compatible).
+To switch providers, replace the body of `call()` only; the rest is unchanged.
 """
 import json
 from typing import Any
 
-import requests
+from openai import OpenAI
 
 from app.config import settings
 
 
-class DifyClient:
+class LLMClient:
     def __init__(self) -> None:
-        self.api_url = settings.dify_api_url
-        self.api_key = settings.dify_api_key
-        self.mode    = settings.dify_call_mode
-        self._headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        self._client = OpenAI(
+            api_key=settings.bailian_api_key,
+            base_url=settings.bailian_base_url,
+        )
+        self._model = settings.bailian_model
 
     def call(self, prompt: str, system_prompt: str = "") -> str:
         """Send a prompt and return the raw response text."""
-        if self.mode == "completion":
-            return self._completion(prompt, system_prompt)
-        if self.mode == "chat":
-            return self._chat(prompt, system_prompt)
-        if self.mode == "workflow":
-            return self._workflow(prompt)
-        raise ValueError(f"Unknown dify_call_mode: {self.mode!r}")
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+        )
+        return response.choices[0].message.content or ""
 
     def call_json(self, prompt: str, system_prompt: str = "") -> Any:
-        """Call Dify and parse the response as JSON. Strips markdown code fences."""
+        """Call the LLM and parse the response as JSON. Strips markdown code fences."""
         raw = self.call(prompt, system_prompt).strip()
         if raw.startswith("```"):
             raw = "\n".join(raw.splitlines()[1:]).rstrip("`").strip()
         return json.loads(raw)
 
-    # ── TODO: implement after EY IT confirms the endpoint ────────────────────
 
-    def _completion(self, prompt: str, system_prompt: str) -> str:
-        raise NotImplementedError("Dify completion endpoint not yet configured")
-
-    def _chat(self, prompt: str, system_prompt: str) -> str:
-        raise NotImplementedError("Dify chat endpoint not yet configured")
-
-    def _workflow(self, prompt: str) -> str:
-        raise NotImplementedError("Dify workflow endpoint not yet configured")
-
-
-dify_client = DifyClient()
+dify_client = LLMClient()
