@@ -34,6 +34,7 @@ export const api = {
     return req('POST', '/reports/upload', fd, true)
   },
   getReport: (id)                 => req('GET',  `/reports/${id}`),
+  deleteReport: (id)              => req('DELETE', `/reports/${id}`),
 
   // Jobs
   listJobs: ()                    => req('GET',  '/jobs'),

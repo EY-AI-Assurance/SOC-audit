@@ -49,10 +49,13 @@ def _write_state(report_id: str, **kwargs) -> None:
 def _bg_parse(report_id: str, pdf_path: Path) -> None:
     try:
         pages = parse_pdf(pdf_path)
+        if not _state_path(report_id).exists():
+            return
         save_parsed(pages, settings.parsed_dir / f"{report_id}.json")
         _write_state(report_id, status=ReportStatus.READY)
     except Exception as exc:
-        _write_state(report_id, status=ReportStatus.FAILED, error=str(exc))
+        if _state_path(report_id).exists():
+            _write_state(report_id, status=ReportStatus.FAILED, error=str(exc))
 
 
 def _bg_fill(report_id: str) -> None:
@@ -117,6 +120,26 @@ async def upload_report(file: UploadFile, background_tasks: BackgroundTasks):
 def get_report(report_id: str):
     state = _read_state(report_id)
     return ReportResponse(report_id=report_id, **state)
+
+
+@router.delete("/{report_id}", status_code=204)
+def delete_report(report_id: str):
+    state_path = _state_path(report_id)
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+
+    for path in [
+        settings.uploads_dir / f"{report_id}.pdf",
+        settings.parsed_dir / f"{report_id}.json",
+        state_path,
+    ]:
+        if path.exists():
+            path.unlink()
+
+    output_filename = state.get("output_filename")
+    if output_filename:
+        output_path = settings.outputs_dir / output_filename
+        if output_path.exists():
+            output_path.unlink()
 
 
 @router.post("/{report_id}/fill", response_model=FillResponse, status_code=202)
