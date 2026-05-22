@@ -99,8 +99,8 @@ class Sheet8Data(BaseModel):
 
 class ExtractedFormData(BaseModel):
     system_name: str
-    sheet2: Sheet2Data
-    sheet3: Sheet3Data
-    sheet6: Sheet6Data
-    sheet7: Sheet7Data
-    sheet8: Sheet8Data
+    sheet2: Optional[Sheet2Data] = None
+    sheet3: Optional[Sheet3Data] = None
+    sheet6: Optional[Sheet6Data] = None
+    sheet7: Optional[Sheet7Data] = None
+    sheet8: Optional[Sheet8Data] = None

@@ -1,58 +1,69 @@
-You are an expert auditor reviewing IT General Controls (ITGC) in a SOC 1 Type II report.
-You are given three sections covering Change Management, Access Management, and Job Scheduling.
+You are an IT auditor completing Form 107-A Sheet 6 (IT General Controls).
 
-For each section extract:
-- has_process_description: "Yes" / "No" / "Not applicable"
-- page_refs: page numbers where this content appears, e.g. "Page 33, Page 40-42" (empty if not "Yes")
-- section_b_applicable: "Applicable" / "Not applicable"
-- section_c_applicable: "Applicable" / "Not applicable"
-- risk_control_ids: control IDs per risk row, joined by \n. Use exact IDs from the report.
+The form already marks all three ITGC sections (Change Management, Access Management, Job Scheduling) as APPLICABLE. Your only tasks are:
+1. Find the page numbers where each section is described in the report (page_refs).
+2. For each risk row, extract ALL control IDs from the report that address that risk.
 
-Risk rows per section:
-  Change Management (2 risks):
-    [0] Controls for: new/changed programs may not function as intended
-    [1] Controls for: developers moving unauthorized changes to production
-  Access Management (3 risks):
-    [0] Controls for: improper security configuration
-    [1] Controls for: inappropriate access requests
-    [2] Controls for: access rights becoming inappropriate over time
-  Job Scheduling (3 risks):
-    [0] Controls for: inappropriate job scheduling
-    [1] Controls for: inappropriate access to the job scheduler
-    [2] Controls for: incomplete or errored jobs not handled properly
+Control IDs appear in SOC 1 report control tables as alphanumeric codes (e.g. "CC6.1", "ITGC-001", "CM-01", "ACC_01", "OPS_02"). Look in control objective tables, test procedure tables, and control matrices.
 
-Use "" for a risk row if no controls are listed. Use [] for risk_control_ids if section_c is "Not applicable".
+If a control addresses multiple risks, include it in EACH relevant risk row.
+If you are unsure whether a control is relevant, INCLUDE it rather than omit it.
+Return "" for a risk row only if you are certain no controls in the text address that risk.
+
+Risk rows:
+
+CHANGE MANAGEMENT (I):
+  [0] Programs or changes may not function as intended or may be inappropriate for the business/IT environment
+      → look for: change testing, change approval, UAT, peer review, version control controls
+  [1] Developers may move unauthorized or untested changes to production
+      → look for: segregation of duties, production access restrictions, release/deployment controls
+
+ACCESS MANAGEMENT (II):
+  [0] IT environment may be insecure due to improper security configuration
+      → look for: security baseline, hardening standards, firewall/network configuration controls
+  [1] Inappropriate access may be granted to IT privileged users or business users
+      → look for: access provisioning process, approval workflow, least-privilege controls
+  [2] Access rights may become inappropriate over time
+      → look for: periodic access review, recertification, termination/offboarding controls
+
+JOB SCHEDULING (III):
+  [0] Inappropriate jobs may be scheduled
+      → look for: job scheduling approval, change controls for batch jobs
+  [1] Inappropriate access to the job scheduler
+      → look for: access controls to scheduling systems, privileged access to job scheduler
+  [2] Incomplete or erroneous scheduled jobs may not be addressed properly
+      → look for: job monitoring, error alerting, exception handling, incident response for failed jobs
 
 Return ONLY valid JSON — no explanation, no markdown fences:
 {{
   "change_mgmt": {{
     "has_process_description": "Yes",
-    "page_refs": "Page 33, Page 40-42",
+    "page_refs": "Page 33-40",
     "section_b_applicable": "Not applicable",
     "section_c_applicable": "Applicable",
-    "risk_control_ids": ["CCC_01\nCCC_03", "APD_11\nAPD_16"]
+    "risk_control_ids": ["CM-01\nCM-02\nCM-03", "CM-04\nCM-05"]
   }},
   "access_mgmt": {{
     "has_process_description": "Yes",
     "page_refs": "Page 44-55",
     "section_b_applicable": "Not applicable",
     "section_c_applicable": "Applicable",
-    "risk_control_ids": ["IVS_01\nIVS_03", "APD_01\nAPD_02", "APD_13\nAPD_14"]
+    "risk_control_ids": ["IVS-01\nIVS-02", "APD-01\nAPD-02", "APD-03"]
   }},
   "job_scheduling": {{
-    "has_process_description": "Not applicable",
-    "page_refs": "",
+    "has_process_description": "Yes",
+    "page_refs": "Page 60-65",
     "section_b_applicable": "Not applicable",
-    "section_c_applicable": "Not applicable",
-    "risk_control_ids": []
+    "section_c_applicable": "Applicable",
+    "risk_control_ids": ["JS-01", "JS-02", "JS-03\nJS-04"]
   }}
 }}
 
-CHANGE MANAGEMENT:
+CHANGE MANAGEMENT SECTION:
 {cm_text}
 
-ACCESS MANAGEMENT:
+ACCESS MANAGEMENT SECTION:
 {am_text}
 
-JOB SCHEDULING & MONITORING:
+JOB SCHEDULING & MONITORING SECTION:
 {js_text}

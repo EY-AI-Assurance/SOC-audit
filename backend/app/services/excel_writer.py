@@ -12,9 +12,20 @@ import zipfile
 from pathlib import Path
 
 import openpyxl
+from openpyxl.cell.cell import MergedCell
 
 from app.config import settings
 from app.models.extraction import ExtractedFormData, ITGCSection
+
+
+def _cell(ws, row: int, col: int):
+    """Return a writable cell, resolving merged ranges to their top-left cell."""
+    c = ws.cell(row, col)
+    if isinstance(c, MergedCell):
+        for rng in ws.merged_cells.ranges:
+            if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
+                return ws.cell(rng.min_row, rng.min_col)
+    return c
 
 
 # ── Sheet 6 row map ───────────────────────────────────────────────────────────
@@ -38,27 +49,41 @@ def _write_sheet2(ws, data: ExtractedFormData) -> None:
 def _write_sheet3(ws, data: ExtractedFormData) -> None:
     s3 = data.sheet3
     if s3.has_qualified_opinion and s3.opinion:
-        ws["A4"] = s3.opinion.description
-        ws["D4"] = s3.opinion.explanation
+        _cell(ws, 4, 1).value = s3.opinion.description
+        _cell(ws, 4, 4).value = s3.opinion.explanation
     for i, exc in enumerate(s3.exceptions):
         r = 12 + i
-        ws.cell(r, 1).value = exc.index
-        ws.cell(r, 2).value = exc.control
-        ws.cell(r, 3).value = exc.exception_desc
-        ws.cell(r, 4).value = exc.mgmt_response
-        ws.cell(r, 5).value = exc.is_audited
-        ws.cell(r, 6).value = exc.audit_relevant
+        _cell(ws, r, 1).value = exc.index
+        _cell(ws, r, 2).value = exc.control
+        _cell(ws, r, 3).value = exc.exception_desc
+        _cell(ws, r, 4).value = exc.mgmt_response
+        _cell(ws, r, 5).value = exc.is_audited
+        _cell(ws, r, 6).value = exc.audit_relevant
 
 
 def _write_itgc_section(ws, section: ITGCSection, rows: dict) -> None:
-    ws.cell(rows["has_desc"],  _COL_E).value = section.has_process_description
-    if section.has_process_description == "Yes":
-        ws.cell(rows["page_refs"], _COL_E).value = section.page_refs
-    ws.cell(rows["sec_b"], _COL_E).value = section.section_b_applicable
-    ws.cell(rows["sec_c"], _COL_E).value = section.section_c_applicable
-    for risk_row, ids in zip(rows["risks"], section.risk_control_ids):
-        ws.cell(risk_row, _COL_D).value = "See col (XI)"
-        ws.cell(risk_row, _COL_E).value = ids
+    def _set_if_empty(row: int, col: int, value) -> None:
+        c = _cell(ws, row, col)
+        if not c.value:
+            c.value = value
+
+    # Preserve all pre-filled template values; only fill blank cells
+    _set_if_empty(rows["has_desc"], _COL_E, section.has_process_description)
+    _set_if_empty(rows["sec_b"],    _COL_E, section.section_b_applicable)
+    _set_if_empty(rows["sec_c"],    _COL_E, section.section_c_applicable)
+
+    # Page refs: write when either LLM or template says "Yes"
+    effective_has_desc = _cell(ws, rows["has_desc"], _COL_E).value or section.has_process_description
+    if effective_has_desc == "Yes" and section.page_refs:
+        _set_if_empty(rows["page_refs"], _COL_E, section.page_refs)
+
+    # Control IDs: write whenever section_c is Applicable (template always pre-fills this)
+    effective_sec_c = _cell(ws, rows["sec_c"], _COL_E).value or section.section_c_applicable
+    if effective_sec_c == "Applicable":
+        for risk_row, ids in zip(rows["risks"], section.risk_control_ids):
+            _set_if_empty(risk_row, _COL_D, "See col (XI)")
+            if ids:
+                _cell(ws, risk_row, _COL_E).value = ids
 
 
 def _write_sheet6(ws, data: ExtractedFormData) -> None:
@@ -69,14 +94,14 @@ def _write_sheet6(ws, data: ExtractedFormData) -> None:
 
 def _write_sheet7(ws, data: ExtractedFormData) -> None:
     for i, org in enumerate(data.sheet7.organizations):
-        ws.cell(4 + i, 1).value = org.name
-        ws.cell(4 + i, 2).value = org.services
+        _cell(ws, 4 + i, 1).value = org.name
+        _cell(ws, 4 + i, 2).value = org.services
 
 
 def _write_sheet8(ws, data: ExtractedFormData) -> None:
     for i, cuec in enumerate(data.sheet8.cuecs):
-        ws.cell(5 + i, 1).value = cuec.objective_and_page
-        ws.cell(5 + i, 2).value = cuec.description
+        _cell(ws, 5 + i, 1).value = cuec.objective_and_page
+        _cell(ws, 5 + i, 2).value = cuec.description
 
 
 # ── VML checkbox helper ───────────────────────────────────────────────────────
@@ -101,22 +126,31 @@ def _tick_no_subservice_checkbox(output_path: Path) -> None:
 
 # ── Main entry ────────────────────────────────────────────────────────────────
 
-def write_excel(data: ExtractedFormData, output_path: Path) -> Path:
-    shutil.copy2(settings.template_path, output_path)
+def write_excel(
+    data: ExtractedFormData,
+    output_path: Path,
+    template_path: Path | None = None,
+) -> Path:
+    src = template_path or settings.template_path
+    shutil.copy2(src, output_path)
     wb = openpyxl.load_workbook(output_path)
 
-    # Strip accidental trailing spaces from sheet names
     ws = {name.strip(): wb[name] for name in wb.sheetnames}
 
-    _write_sheet2(ws["2.索引信息"], data)
-    _write_sheet3(ws["3.报告保留意见和测试异常情况"], data)
-    _write_sheet6(ws["6.IT流程和IT一般控制"], data)
-    _write_sheet7(ws["7.子服务机构"], data)
-    _write_sheet8(ws["8.补偿性用户实体控制"], data)
+    if data.sheet2:
+        _write_sheet2(ws["2.索引信息"], data)
+    if data.sheet3:
+        _write_sheet3(ws["3.报告保留意见和测试异常情况"], data)
+    if data.sheet6:
+        _write_sheet6(ws["6.IT流程和IT一般控制"], data)
+    if data.sheet7:
+        _write_sheet7(ws["7.子服务机构"], data)
+    if data.sheet8:
+        _write_sheet8(ws["8.补偿性用户实体控制"], data)
 
     wb.save(output_path)
 
-    if not data.sheet7.has_subservice:
+    if data.sheet7 and not data.sheet7.has_subservice:
         _tick_no_subservice_checkbox(output_path)
 
     return output_path

@@ -1,12 +1,10 @@
-"""
-Extraction orchestrator.
-
-Reads parsed pages → locates sections via TOC → calls Dify once per sheet
-→ returns a validated ExtractedFormData ready for Excel writing.
-"""
+import logging
 from pathlib import Path
+from typing import Callable
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 from app.models.extraction import (
     CUECItem, ExceptionItem, ExtractedFormData,
     ITGCSection, QualifiedOpinion,
@@ -20,8 +18,6 @@ from app.services.pdf_parser import extract_section, load_parsed
 def _prompt(name: str, **kwargs) -> str:
     return (settings.prompts_dir / name).read_text(encoding="utf-8").format(**kwargs)
 
-
-# ── Per-sheet extractors ──────────────────────────────────────────────────────
 
 def _parse_toc(pages: dict[int, str]) -> TOCData:
     toc_text = "\n\n".join(
@@ -70,23 +66,76 @@ def _extract_sheet8(text: str) -> Sheet8Data:
     return Sheet8Data(cuecs=cuecs)
 
 
-# ── Main pipeline ─────────────────────────────────────────────────────────────
+# Progress percentages: (start, end) for each step
+_STEP_PCT = {
+    "toc": (5, 15),
+    2:     (15, 30),
+    3:     (30, 45),
+    6:     (45, 65),
+    7:     (65, 80),
+    8:     (80, 95),
+}
 
-def extract(parsed_path: Path) -> ExtractedFormData:
-    """Full extraction pipeline. Raises on LLM errors or validation failures."""
+
+def extract(
+    parsed_path: Path,
+    sheets: list[int] | None = None,
+    progress_cb: Callable[[str, int], None] | None = None,
+) -> ExtractedFormData:
+    if sheets is None:
+        sheets = [2, 3, 6, 7, 8]
+
+    def _cb(step: str, pct: int) -> None:
+        if progress_cb:
+            progress_cb(step, pct)
+
     pages = load_parsed(parsed_path)
 
-    toc = _parse_toc(pages)  # LLM call #0
+    _cb("Locating sections (TOC)", _STEP_PCT["toc"][0])
+    toc = _parse_toc(pages)
+    print(f"[EXTRACTOR] TOC: system={toc.system_name}, opinion={toc.opinion_pages}, cm={toc.change_mgmt_pages}", flush=True)
+    _cb("Sections located", _STEP_PCT["toc"][1])
 
-    return ExtractedFormData(
-        system_name=toc.system_name,
-        sheet2=_extract_sheet2(extract_section(pages, toc.opinion_pages)),
-        sheet3=_extract_sheet3(extract_section(pages, toc.opinion_pages)),
-        sheet6=_extract_sheet6(
+    result = ExtractedFormData(system_name=toc.system_name)
+
+    if 2 in sheets:
+        logger.info("Starting Sheet 2 extraction")
+        _cb("Extracting report metadata (Sheet 2)", _STEP_PCT[2][0])
+        result.sheet2 = _extract_sheet2(extract_section(pages, toc.opinion_pages))
+        logger.info("Sheet 2 done: %s", result.sheet2)
+        _cb("Sheet 2 done", _STEP_PCT[2][1])
+
+    if 3 in sheets:
+        logger.info("Starting Sheet 3 extraction")
+        _cb("Extracting opinion & exceptions (Sheet 3)", _STEP_PCT[3][0])
+        result.sheet3 = _extract_sheet3(extract_section(pages, toc.opinion_pages))
+        logger.info("Sheet 3 done: qualified=%s, exceptions=%d",
+                    result.sheet3.has_qualified_opinion, len(result.sheet3.exceptions))
+        _cb("Sheet 3 done", _STEP_PCT[3][1])
+
+    if 6 in sheets:
+        logger.info("Starting Sheet 6 extraction")
+        _cb("Extracting ITGC controls (Sheet 6)", _STEP_PCT[6][0])
+        result.sheet6 = _extract_sheet6(
             extract_section(pages, toc.change_mgmt_pages),
             extract_section(pages, toc.access_mgmt_pages),
             extract_section(pages, toc.job_scheduling_pages),
-        ),
-        sheet7=_extract_sheet7(extract_section(pages, toc.subservice_pages)),
-        sheet8=_extract_sheet8(extract_section(pages, toc.cuec_pages)),
-    )
+        )
+        logger.info("Sheet 6 done")
+        _cb("Sheet 6 done", _STEP_PCT[6][1])
+
+    if 7 in sheets:
+        logger.info("Starting Sheet 7 extraction")
+        _cb("Identifying subservice organizations (Sheet 7)", _STEP_PCT[7][0])
+        result.sheet7 = _extract_sheet7(extract_section(pages, toc.subservice_pages))
+        logger.info("Sheet 7 done: has_subservice=%s", result.sheet7.has_subservice)
+        _cb("Sheet 7 done", _STEP_PCT[7][1])
+
+    if 8 in sheets:
+        logger.info("Starting Sheet 8 extraction")
+        _cb("Extracting CUECs (Sheet 8)", _STEP_PCT[8][0])
+        result.sheet8 = _extract_sheet8(extract_section(pages, toc.cuec_pages))
+        logger.info("Sheet 8 done: cuecs=%d", len(result.sheet8.cuecs))
+        _cb("Sheet 8 done", _STEP_PCT[8][1])
+
+    return result

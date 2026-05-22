@@ -14,10 +14,12 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.models.schemas import FillResponse, ReportResponse, ReportStatus, UploadResponse
+from app.models.schemas import FillResponse, ReportInfo, ReportResponse, ReportStatus, UploadResponse
 from app.services.excel_writer import write_excel
 from app.services.extractor import extract
 from app.services.pdf_parser import parse_pdf, save_parsed
+
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -70,6 +72,23 @@ def _bg_fill(report_id: str) -> None:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+@router.get("", response_model=dict)
+def list_reports():
+    reports = []
+    for p in settings.parsed_dir.glob("*_state.json"):
+        state = json.loads(p.read_text(encoding="utf-8"))
+        report_id = p.stem.replace("_state", "")
+        reports.append(ReportInfo(
+            report_id=report_id,
+            filename=state.get("filename", ""),
+            status=state.get("status", ""),
+            system_name=state.get("system_name", ""),
+            uploaded_at=state.get("uploaded_at", ""),
+        ).model_dump())
+    reports.sort(key=lambda r: r["uploaded_at"], reverse=True)
+    return {"reports": reports}
+
+
 @router.post("/upload", response_model=UploadResponse, status_code=202)
 async def upload_report(file: UploadFile, background_tasks: BackgroundTasks):
     if not file.filename.lower().endswith(".pdf"):
@@ -79,7 +98,12 @@ async def upload_report(file: UploadFile, background_tasks: BackgroundTasks):
     pdf_path  = settings.uploads_dir / f"{report_id}.pdf"
     pdf_path.write_bytes(await file.read())
 
-    _write_state(report_id, status=ReportStatus.PARSING, filename=file.filename)
+    _write_state(
+        report_id,
+        status=ReportStatus.PARSING,
+        filename=file.filename,
+        uploaded_at=datetime.now(timezone.utc).isoformat(),
+    )
     background_tasks.add_task(_bg_parse, report_id, pdf_path)
 
     return UploadResponse(

@@ -6,6 +6,8 @@ soc reports/
 backend/storage/uploads/
 backend/storage/parsed/
 backend/storage/outputs/
+backend/storage/jobs/
+backend/storage/templates/
 
 # Python
 __pycache__/

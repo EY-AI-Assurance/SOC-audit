@@ -1,53 +1,66 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { api } from '../api'
+import ConfirmDialog from '../components/ConfirmDialog'
 import JobCard from '../components/JobCard'
-
-const MOCK_JOBS = [
-  {
-    id: '003',
-    reports: ['金蝶SOC1.pdf', '阿里云SOC1.pdf'],
-    template: 'Form 107-A (CN).xlsx',
-    sheets: ['2', '3', '6', '7', '8'],
-    status: 'processing',
-    progress: 60,
-    currentStep: 'Extracting Sheet 6 — 金蝶SOC1.pdf',
-    date: '2025-05-21 14:32',
-    error: null,
-  },
-  {
-    id: '002',
-    reports: ['世纪互联SOC1.pdf'],
-    template: 'Form 107-A (CN).xlsx',
-    sheets: ['2', '3', '6'],
-    status: 'done',
-    progress: 100,
-    currentStep: null,
-    date: '2025-05-20 11:15',
-    error: null,
-  },
-  {
-    id: '001',
-    reports: ['金蝶SOC1.pdf'],
-    template: 'Form 107-A (CN).xlsx',
-    sheets: ['2', '3', '6', '7', '8'],
-    status: 'failed',
-    progress: 45,
-    currentStep: null,
-    date: '2025-05-18 09:40',
-    error: 'LLM extraction error on Sheet 6: JSON parse failed',
-  },
-]
+import NewJobModal from '../components/NewJobModal'
 
 export default function Jobs() {
-  const [jobs] = useState(MOCK_JOBS)
+  const [jobs, setJobs]             = useState([])
+  const [showModal, setModal]       = useState(false)
+  const [error, setError]           = useState('')
+  const [confirmId, setConfirmId]   = useState(null)
+
+  const load = async () => {
+    try {
+      const data = await api.listJobs()
+      setJobs(data.jobs || [])
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  // Poll every 3 s while any job is processing
+  useEffect(() => {
+    const hasActive = jobs.some(j => j.status === 'processing')
+    if (!hasActive) return
+    const id = setInterval(load, 3000)
+    return () => clearInterval(id)
+  }, [jobs])
+
+  const handleDownload = (jobId, reportId) => {
+    window.location.href = api.downloadUrl(jobId, reportId)
+  }
+
+  const handleDeleteConfirmed = async () => {
+    try {
+      await api.deleteJob(confirmId)
+      setJobs(prev => prev.filter(j => j.job_id !== confirmId))
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setConfirmId(null)
+    }
+  }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-bold text-[#2E2E38]">Jobs</h1>
-        <button className="px-4 py-2 bg-[#FFE600] text-[#2E2E38] text-sm font-semibold rounded-lg hover:bg-yellow-300 transition-colors">
+        <button
+          onClick={() => setModal(true)}
+          className="px-4 py-2 bg-[#FFE600] text-[#2E2E38] text-sm font-semibold rounded-lg hover:bg-yellow-300 transition-colors"
+        >
           + New Job
         </button>
       </div>
+
+      {error && (
+        <p className="text-sm text-red-500 bg-red-50 rounded-lg px-4 py-3 mb-4">{error}</p>
+      )}
 
       {jobs.length === 0 ? (
         <div className="text-center py-20 text-gray-400">
@@ -58,14 +71,28 @@ export default function Jobs() {
         <div className="flex flex-col gap-4">
           {jobs.map(job => (
             <JobCard
-              key={job.id}
+              key={job.job_id}
               job={job}
-              onViewDetails={(id) => console.log('view', id)}
-              onDownload={(id) => console.log('download', id)}
-              onRetry={(id) => console.log('retry', id)}
+              onDownload={handleDownload}
+              onDelete={() => setConfirmId(job.job_id)}
             />
           ))}
         </div>
+      )}
+
+      {confirmId && (
+        <ConfirmDialog
+          message="将会在本地删除本次填写记录及输出文件，此操作不可恢复。"
+          onConfirm={handleDeleteConfirmed}
+          onCancel={() => setConfirmId(null)}
+        />
+      )}
+
+      {showModal && (
+        <NewJobModal
+          onClose={() => setModal(false)}
+          onCreated={() => { setModal(false); load() }}
+        />
       )}
     </div>
   )

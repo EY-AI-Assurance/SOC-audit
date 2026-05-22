@@ -19,6 +19,8 @@ class Settings(BaseSettings):
         root_dir.parent.parent / "Form 107-A Appendices (CN).xlsx"
     )
     prompts_dir: Path = Path(__file__).parent / "prompts"
+    jobs_dir: Path = storage_dir / "jobs"
+    templates_dir: Path = storage_dir / "templates"
 
     # ── PDF parsing ───────────────────────────────────────────────────────────
     toc_max_pages: int = 6  # pages to scan for the table of contents
@@ -35,5 +37,6 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Ensure storage directories exist at startup
-for _d in [settings.uploads_dir, settings.parsed_dir, settings.outputs_dir]:
+for _d in [settings.uploads_dir, settings.parsed_dir, settings.outputs_dir,
+           settings.jobs_dir, settings.templates_dir]:
     _d.mkdir(parents=True, exist_ok=True)
