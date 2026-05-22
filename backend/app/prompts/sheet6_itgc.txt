@@ -1,61 +1,99 @@
-You are an IT auditor completing Form 107-A Sheet 6 (IT General Controls).
+You are an IT auditor completing Form 107-A Sheet 6 (IT General Controls) for a SOC 1 Type II report.
 
-The form already marks all three ITGC sections (Change Management, Access Management, Job Scheduling) as APPLICABLE. Your only tasks are:
-1. Find the page numbers where each section is described in the report (page_refs).
-2. For each risk row, extract ALL control IDs from the report that address that risk.
+CRITICAL — risk_control_ids must contain ONLY exact control reference codes (序列号) as they appear
+in the SOC report (e.g. "CCC_01", "APD_11~14", "KDC-C2.1", "CM-3"). These are alphanumeric identifiers
+printed in the report's control objective tables and test procedure tables. Never write descriptive text,
+control names, explanations, or any natural language — only the codes themselves, one per line,
+using "~" for consecutive ranges (e.g. "CCC_07~09" instead of listing each separately).
 
-Control IDs appear in SOC 1 report control tables as alphanumeric codes (e.g. "CC6.1", "ITGC-001", "CM-01", "ACC_01", "OPS_02"). Look in control objective tables, test procedure tables, and control matrices.
+Your tasks for each of the three ITGC sections (Change Management, Access Management, Job Scheduling):
+1. Determine whether the section is described in the report (has_process_description: "Yes" / "Not applicable").
+2. If "Yes", list the page numbers where it is described (page_refs).
+3. Determine section_b_applicable: almost always "Not applicable" unless the report explicitly states it is a review engagement.
+4. Determine section_c_applicable: "Applicable" if the section has controls; "Not applicable" if the section does not apply to this service organization.
+5. For each risk row, extract ONLY the control reference codes that DIRECTLY address that specific risk.
 
-If a control addresses multiple risks, include it in EACH relevant risk row.
-If you are unsure whether a control is relevant, INCLUDE it rather than omit it.
-Return "" for a risk row only if you are certain no controls in the text address that risk.
+IMPORTANT — has_process_description / section_c_applicable for Job Scheduling:
+- Set "Not applicable" if the report states that no service-organization-controlled scheduled jobs exist,
+  or if job scheduling is entirely absent from the ITGC scope.
+- Set "Yes" / "Applicable" only if the report describes actual batch job or scheduled task controls operated by the service organization.
 
-Risk rows:
+IMPORTANT — Control ID selection (do NOT include every control in the report):
+- Each risk row should only receive controls whose primary purpose directly addresses that risk.
+- Do NOT add detective/monitoring controls (alerts, logging) to preventive risk rows unless monitoring is the primary mitigating control.
+- If a control addresses multiple risks, include it in each relevant row.
+- Exclude product-specific or customer-facing controls that are not operated by the core service organization.
+
+IMPORTANT — Control ID formatting:
+- Control IDs in SOC 1 reports sometimes wrap across lines (e.g., "IVS_ECS_ECI\n_12" or "APD_ECS_EC\nI_21").
+  Reconstruct the full ID by joining the continuation: IVS_ECS_ECI_12, APD_ECS_ECI_21.
+- Preserve underscores and exact casing from the report.
+
+IMPORTANT — page_refs format:
+- Use newline-separated entries, starting with the language prefix, e.g.:
+  "EN Report:\nPage 33\nPage 40~42\nPage 95\nPage 113~118"
+- Use "~" for page ranges (not "-").
+- Include the narrative pages AND the control objective/test table pages.
+
+Risk rows and what controls belong to each:
 
 CHANGE MANAGEMENT (I):
-  [0] Programs or changes may not function as intended or may be inappropriate for the business/IT environment
-      → look for: change testing, change approval, UAT, peer review, version control controls
+  [0] Programs or changes may not function as intended or may be inappropriate
+      → controls for: change testing, change approval, UAT, peer review, version/release validation
+      → do NOT include: rollback, change notification to users, post-deployment monitoring
   [1] Developers may move unauthorized or untested changes to production
-      → look for: segregation of duties, production access restrictions, release/deployment controls
+      → controls for: segregation of duties between dev/prod, production access restrictions,
+        deployment authorization, privileged access controls that gate production deployment
+      → do NOT include: change testing/approval (those belong to risk [0])
 
 ACCESS MANAGEMENT (II):
   [0] IT environment may be insecure due to improper security configuration
-      → look for: security baseline, hardening standards, firewall/network configuration controls
+      → controls for: network isolation, firewall/security groups, OS/image hardening,
+        vulnerability scanning, security baselines, credential/key security, encryption settings
+      → do NOT include: user provisioning or access review (those belong to risks [1] and [2])
   [1] Inappropriate access may be granted to IT privileged users or business users
-      → look for: access provisioning process, approval workflow, least-privilege controls
+      → controls for: access provisioning policy, joiner process, request/approval workflow,
+        least-privilege, role/permission assignment
+      → Note: privileged access restriction controls (e.g., root password, bastion host) also appear here
+        if they govern who can be granted privileged access
   [2] Access rights may become inappropriate over time
-      → look for: periodic access review, recertification, termination/offboarding controls
+      → controls for: periodic access review, recertification, termination/offboarding,
+        role-change deprovisioning
 
 JOB SCHEDULING (III):
   [0] Inappropriate jobs may be scheduled
-      → look for: job scheduling approval, change controls for batch jobs
+      → controls for: job scheduling approval, change controls for batch jobs
   [1] Inappropriate access to the job scheduler
-      → look for: access controls to scheduling systems, privileged access to job scheduler
+      → controls for: access controls to scheduling systems, privileged access to job scheduler
   [2] Incomplete or erroneous scheduled jobs may not be addressed properly
-      → look for: job monitoring, error alerting, exception handling, incident response for failed jobs
+      → controls for: job monitoring, error alerting, exception handling, failed-job response
 
 Return ONLY valid JSON — no explanation, no markdown fences:
 {{
   "change_mgmt": {{
     "has_process_description": "Yes",
-    "page_refs": "Page 33-40",
+    "page_refs": "EN Report:\nPage 33\nPage 40~42\nPage 95\nPage 113~118",
     "section_b_applicable": "Not applicable",
     "section_c_applicable": "Applicable",
-    "risk_control_ids": ["CM-01\nCM-02\nCM-03", "CM-04\nCM-05"]
+    "risk_control_ids": ["CCC_01\nCCC_03\nCCC_05\nCCC_07~09", "APD_11\nAPD_16\nCCC_04\nCCC_11"]
   }},
   "access_mgmt": {{
     "has_process_description": "Yes",
-    "page_refs": "Page 44-55",
+    "page_refs": "EN Report:\nPage 31~34\nPage 39\nPage 78~103",
     "section_b_applicable": "Not applicable",
     "section_c_applicable": "Applicable",
-    "risk_control_ids": ["IVS-01\nIVS-02", "APD-01\nAPD-02", "APD-03"]
+    "risk_control_ids": [
+      "IVS_01\nIVS_03~08\nIVS_ECS_10\nIVS_ECS_ECI_12\nIVS_RDS_14\nTVM_01~02\nTVM_04\nAPD_03\nAPD_06~08\nAPD_11\nAPD_15~16\nAPD_ECS_ECI_21",
+      "APD_01~02\nAPD_04~05\nAPD_11\nAPD_17~18",
+      "APD_13~14"
+    ]
   }},
   "job_scheduling": {{
-    "has_process_description": "Yes",
-    "page_refs": "Page 60-65",
+    "has_process_description": "Not applicable",
+    "page_refs": "",
     "section_b_applicable": "Not applicable",
-    "section_c_applicable": "Applicable",
-    "risk_control_ids": ["JS-01", "JS-02", "JS-03\nJS-04"]
+    "section_c_applicable": "Not applicable",
+    "risk_control_ids": []
   }}
 }}
 
