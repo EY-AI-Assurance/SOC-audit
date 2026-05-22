@@ -15,9 +15,6 @@ class Settings(BaseSettings):
     uploads_dir: Path = storage_dir / "uploads"
     parsed_dir: Path = storage_dir / "parsed"
     outputs_dir: Path = storage_dir / "outputs"
-    template_path: Path = (
-        root_dir.parent.parent / "Form 107-A Appendices (CN).xlsx"
-    )
     prompts_dir: Path = Path(__file__).parent / "prompts"
     jobs_dir: Path = storage_dir / "jobs"
     templates_dir: Path = storage_dir / "templates"

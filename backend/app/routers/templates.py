@@ -1,5 +1,4 @@
 import json
-import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,34 +22,9 @@ def _all_templates() -> list[dict]:
     ]
 
 
-def _find_by_path(path: str) -> dict | None:
-    for t in _all_templates():
-        if t.get("path") == path:
-            return t
-    return None
-
-
-def ensure_default_template() -> None:
-    """Auto-register the built-in template on startup if not already listed."""
-    tp = settings.template_path
-    if not tp.exists() or _find_by_path(str(tp)):
-        return
-    tid = str(uuid.uuid4())
-    _meta_path(tid).write_text(
-        json.dumps({
-            "template_id": tid,
-            "name": tp.name,
-            "path": str(tp),
-            "uploaded_at": datetime.now(timezone.utc).isoformat(),
-        }, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-
 @router.get("", response_model=dict)
 def list_templates():
-    ensure_default_template()
-    return {"templates": [TemplateInfo(**t).model_dump() for t in _all_templates()]}
+    return {"templates": [TemplateInfo(**template).model_dump() for template in _all_templates()]}
 
 
 @router.post("/upload", response_model=TemplateInfo, status_code=201)
@@ -70,6 +44,21 @@ async def upload_template(file: UploadFile):
     }
     _meta_path(tid).write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     return TemplateInfo(**meta)
+
+
+@router.delete("/{template_id}", status_code=204)
+def delete_template(template_id: str):
+    meta_path = _meta_path(template_id)
+    if not meta_path.exists():
+        return
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    template_path = Path(meta.get("path", ""))
+
+    if template_path.exists() and template_path.is_relative_to(settings.templates_dir):
+        template_path.unlink()
+
+    meta_path.unlink()
 
 
 def get_template_path(template_id: str) -> Path:

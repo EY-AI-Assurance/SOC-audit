@@ -25,6 +25,7 @@ export const api = {
     fd.append('file', file)
     return req('POST', '/templates/upload', fd, true)
   },
+  deleteTemplate: (id)            => req('DELETE', `/templates/${id}`),
 
   // Reports
   listReports: ()                 => req('GET',  '/reports'),

@@ -26,12 +26,6 @@ class ReportResponse(BaseModel):
     error: Optional[str] = None
 
 
-class FillResponse(BaseModel):
-    report_id: str
-    status: ReportStatus
-    message: str
-
-
 class ReportInfo(BaseModel):
     report_id: str
     filename: str

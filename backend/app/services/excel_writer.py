@@ -14,7 +14,6 @@ from pathlib import Path
 import openpyxl
 from openpyxl.cell.cell import MergedCell
 
-from app.config import settings
 from app.models.extraction import ExtractedFormData, ITGCSection
 
 
@@ -129,10 +128,9 @@ def _tick_no_subservice_checkbox(output_path: Path) -> None:
 def write_excel(
     data: ExtractedFormData,
     output_path: Path,
-    template_path: Path | None = None,
+    template_path: Path,
 ) -> Path:
-    src = template_path or settings.template_path
-    shutil.copy2(src, output_path)
+    shutil.copy2(template_path, output_path)
     wb = openpyxl.load_workbook(output_path)
 
     ws = {name.strip(): wb[name] for name in wb.sheetnames}
