@@ -43,6 +43,8 @@ class LLMClient:
         """Call the LLM and parse the response as JSON.
         Strips Qwen3 thinking tags and markdown code fences before parsing."""
         raw = self.call(prompt, system_prompt).strip()
+        if not raw:
+            raise ValueError("LLM returned an empty response. The prompt may be too long or the API request failed without content.")
 
         # Strip Qwen3 thinking blocks: <think>...</think>
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()

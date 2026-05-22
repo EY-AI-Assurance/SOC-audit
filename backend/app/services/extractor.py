@@ -15,6 +15,42 @@ from app.services.dify_client import dify_client
 from app.services.pdf_parser import extract_section, load_parsed
 
 
+_SHEET6_RULES = {
+    "change_mgmt": {
+        "anchors": ["ccc_"],
+        "conditional_anchors": {
+            "apd_": ["change", "program", "release", "deployment", "production"],
+        },
+        "phrases": ["change management", "program change", "software change"],
+    },
+    "access_mgmt": {
+        "anchors": ["ivs_", "tvm_"],
+        "conditional_anchors": {
+            "apd_": ["access", "privileged", "permission", "account", "role"],
+        },
+        "phrases": [
+            "access management",
+            "logical access",
+            "privileged access",
+            "user access",
+            "vulnerability management",
+            "security configuration",
+        ],
+    },
+    "job_scheduling": {
+        "anchors": [],
+        "conditional_anchors": {},
+        "phrases": [
+            "job scheduling",
+            "job monitoring",
+            "scheduled job",
+            "batch job",
+            "job scheduler",
+        ],
+    },
+}
+
+
 def _prompt(name: str, **kwargs) -> str:
     return (settings.prompts_dir / name).read_text(encoding="utf-8").format(**kwargs)
 
@@ -26,6 +62,84 @@ def _parse_toc(pages: dict[int, str]) -> TOCData:
         if p in pages
     )
     return TOCData(**dify_client.call_json(_prompt("toc.txt", toc_text=toc_text)))
+
+
+def _pages_from_range(page_range: list[int], all_pages: set[int]) -> set[int]:
+    if not page_range or len(page_range) != 2 or page_range == [0, 0]:
+        return set()
+    start, end = page_range
+    if start > end:
+        start, end = end, start
+    return {p for p in range(start, end + 1) if p in all_pages}
+
+
+def _expand_pages(page_numbers: set[int], all_pages: set[int], window: int = 1) -> set[int]:
+    expanded: set[int] = set()
+    for page_number in page_numbers:
+        for candidate in range(page_number - window, page_number + window + 1):
+            if candidate in all_pages:
+                expanded.add(candidate)
+    return expanded
+
+
+def _format_pages(pages: dict[int, str], page_numbers: list[int]) -> str:
+    return "\n\n---\n\n".join(f"[Page {p}]\n{pages[p]}" for p in page_numbers if p in pages)
+
+
+def _collect_candidate_pages(
+    pages: dict[int, str],
+    toc_range: list[int],
+    rules: dict,
+) -> list[int]:
+    all_pages = set(pages)
+    toc_pages = _pages_from_range(toc_range, all_pages)
+    candidates = _expand_pages(toc_pages, all_pages)
+    anchors = [anchor.lower() for anchor in rules["anchors"]]
+    conditional_anchors = {
+        anchor.lower(): [keyword.lower() for keyword in keywords]
+        for anchor, keywords in rules["conditional_anchors"].items()
+    }
+    phrases = [phrase.lower() for phrase in rules["phrases"]]
+
+    for page_number, text in pages.items():
+        lowered_text = text.lower()
+        if any(anchor in lowered_text for anchor in anchors):
+            candidates.add(page_number)
+            continue
+        if any(phrase in lowered_text for phrase in phrases):
+            candidates.add(page_number)
+            continue
+        if any(
+            anchor in lowered_text and any(keyword in lowered_text for keyword in keywords)
+            for anchor, keywords in conditional_anchors.items()
+        ):
+            candidates.add(page_number)
+
+    return sorted(candidates)
+
+
+def _collect_sheet6_candidate_sections(pages: dict[int, str], toc: TOCData) -> tuple[str, str, str]:
+    change_pages = _collect_candidate_pages(
+        pages, toc.change_mgmt_pages, _SHEET6_RULES["change_mgmt"]
+    )
+    access_pages = _collect_candidate_pages(
+        pages, toc.access_mgmt_pages, _SHEET6_RULES["access_mgmt"]
+    )
+    job_pages = _collect_candidate_pages(
+        pages, toc.job_scheduling_pages, _SHEET6_RULES["job_scheduling"]
+    )
+
+    print(
+        "[EXTRACTOR] Sheet 6 candidate pages: "
+        f"change={change_pages}, access={access_pages}, job={job_pages}",
+        flush=True,
+    )
+
+    return (
+        _format_pages(pages, change_pages),
+        _format_pages(pages, access_pages),
+        _format_pages(pages, job_pages),
+    )
 
 
 def _extract_sheet2(text: str) -> Sheet2Data:
@@ -44,6 +158,10 @@ def _extract_sheet3(text: str) -> Sheet3Data:
 
 
 def _extract_sheet6(cm: str, am: str, js: str) -> Sheet6Data:
+    print(
+        f"[EXTRACTOR] Sheet 6 input chars: cm={len(cm)}, am={len(am)}, js={len(js)}",
+        flush=True,
+    )
     raw = dify_client.call_json(
         _prompt("sheet6_itgc.txt", cm_text=cm, am_text=am, js_text=js)
     )
@@ -116,10 +234,11 @@ def extract(
     if 6 in sheets:
         logger.info("Starting Sheet 6 extraction")
         _cb("Extracting ITGC controls (Sheet 6)", _STEP_PCT[6][0])
+        cm_text, am_text, js_text = _collect_sheet6_candidate_sections(pages, toc)
         result.sheet6 = _extract_sheet6(
-            extract_section(pages, toc.change_mgmt_pages),
-            extract_section(pages, toc.access_mgmt_pages),
-            extract_section(pages, toc.job_scheduling_pages),
+            cm_text,
+            am_text,
+            js_text,
         )
         logger.info("Sheet 6 done")
         _cb("Sheet 6 done", _STEP_PCT[6][1])
