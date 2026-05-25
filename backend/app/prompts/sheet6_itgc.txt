@@ -32,6 +32,8 @@ IMPORTANT — Control ID formatting:
 IMPORTANT — page_refs format:
 - Use newline-separated entries, starting with the language prefix, e.g.:
   "EN Report:\nPage 33\nPage 40~42\nPage 95\nPage 113~118"
+- If an input page header contains both "PDF Page X" and "Report Page Y", use
+  the Report Page number in page_refs.
 - Use "~" for page ranges (not "-").
 - Include the narrative pages AND the control objective/test table pages.
 

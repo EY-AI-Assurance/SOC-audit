@@ -1,4 +1,5 @@
 import logging
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -12,7 +13,7 @@ from app.models.extraction import (
     SubserviceOrg, TOCData,
 )
 from app.services.dify_client import dify_client
-from app.services.pdf_parser import extract_section, load_parsed
+from app.services.pdf_parser import load_parsed
 
 
 _SHEET6_RULES = {
@@ -50,6 +51,31 @@ _SHEET6_RULES = {
     },
 }
 
+_SHEET8_START_PHRASES = [
+    "complementary user entity controls",
+    "customer responsibilities",
+    "user control considerations",
+    "user entity responsibilities",
+    "customer control considerations",
+]
+
+_SHEET8_STOP_PHRASES = [
+    "complementary subservice organization controls",
+    "complementary sub-service organization controls",
+    "subservice organization controls",
+    "sub-service organization controls",
+    "section v",
+    "other information",
+]
+
+_SHEET8_RESPONSIBILITY_PHRASES = [
+    "user entities should",
+    "user entities are responsible",
+    "customers are responsible",
+    "customer administrators are responsible",
+    "clients should",
+]
+
 
 def _prompt(name: str, **kwargs) -> str:
     return (settings.prompts_dir / name).read_text(encoding="utf-8").format(**kwargs)
@@ -64,12 +90,54 @@ def _parse_toc(pages: dict[int, str]) -> TOCData:
     return TOCData(**dify_client.call_json(_prompt("toc.txt", toc_text=toc_text)))
 
 
-def _pages_from_range(page_range: list[int], all_pages: set[int]) -> set[int]:
+def _detect_report_page_number(text: str) -> int | None:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    page_number_candidates: list[int] = []
+
+    for line in lines:
+        match = re.fullmatch(r"-?\s*(\d{1,4})\s*-?", line)
+        if match:
+            page_number_candidates.append(int(match.group(1)))
+
+    return page_number_candidates[-1] if page_number_candidates else None
+
+
+def _build_page_number_maps(pages: dict[int, str]) -> tuple[dict[int, set[int]], dict[int, int]]:
+    report_to_pdf: dict[int, set[int]] = {}
+    pdf_to_report: dict[int, int] = {}
+
+    for pdf_page, text in pages.items():
+        report_page = _detect_report_page_number(text)
+        if report_page is None:
+            continue
+        report_to_pdf.setdefault(report_page, set()).add(pdf_page)
+        pdf_to_report[pdf_page] = report_page
+
+    return report_to_pdf, pdf_to_report
+
+
+def _pages_from_range(
+    page_range: list[int],
+    all_pages: set[int],
+    report_to_pdf_page: dict[int, set[int]] | None = None,
+) -> set[int]:
     if not page_range or len(page_range) != 2 or page_range == [0, 0]:
         return set()
     start, end = page_range
     if start > end:
         start, end = end, start
+
+    if report_to_pdf_page:
+        mapped_pages: set[int] = set()
+        for report_page in range(start, end + 1):
+            mapped_pages.update(
+                pdf_page
+                for pdf_page in report_to_pdf_page.get(report_page, set())
+                if pdf_page in all_pages
+            )
+        if mapped_pages:
+            return mapped_pages
+
     return {p for p in range(start, end + 1) if p in all_pages}
 
 
@@ -82,17 +150,33 @@ def _expand_pages(page_numbers: set[int], all_pages: set[int], window: int = 1) 
     return expanded
 
 
-def _format_pages(pages: dict[int, str], page_numbers: list[int]) -> str:
-    return "\n\n---\n\n".join(f"[Page {p}]\n{pages[p]}" for p in page_numbers if p in pages)
+def _format_pages(
+    pages: dict[int, str],
+    page_numbers: list[int],
+    pdf_to_report_page: dict[int, int] | None = None,
+) -> str:
+    formatted_pages = []
+    for page_number in page_numbers:
+        if page_number not in pages:
+            continue
+        report_page = (pdf_to_report_page or {}).get(page_number)
+        if report_page is None:
+            header = f"[PDF Page {page_number}]"
+        else:
+            header = f"[PDF Page {page_number} / Report Page {report_page}]"
+        formatted_pages.append(f"{header}\n{pages[page_number]}")
+
+    return "\n\n---\n\n".join(formatted_pages)
 
 
 def _collect_candidate_pages(
     pages: dict[int, str],
     toc_range: list[int],
     rules: dict,
+    report_to_pdf_page: dict[int, set[int]],
 ) -> list[int]:
     all_pages = set(pages)
-    toc_pages = _pages_from_range(toc_range, all_pages)
+    toc_pages = _pages_from_range(toc_range, all_pages, report_to_pdf_page)
     candidates = _expand_pages(toc_pages, all_pages)
     anchors = [anchor.lower() for anchor in rules["anchors"]]
     conditional_anchors = {
@@ -118,15 +202,32 @@ def _collect_candidate_pages(
     return sorted(candidates)
 
 
-def _collect_sheet6_candidate_sections(pages: dict[int, str], toc: TOCData) -> tuple[str, str, str]:
+def _section_from_toc_range(
+    pages: dict[int, str],
+    page_range: list[int],
+    report_to_pdf_page: dict[int, set[int]],
+    pdf_to_report_page: dict[int, int],
+) -> str:
+    page_numbers = sorted(
+        _pages_from_range(page_range, set(pages), report_to_pdf_page)
+    )
+    return _format_pages(pages, page_numbers, pdf_to_report_page)
+
+
+def _collect_sheet6_candidate_sections(
+    pages: dict[int, str],
+    toc: TOCData,
+    report_to_pdf_page: dict[int, set[int]],
+    pdf_to_report_page: dict[int, int],
+) -> tuple[str, str, str]:
     change_pages = _collect_candidate_pages(
-        pages, toc.change_mgmt_pages, _SHEET6_RULES["change_mgmt"]
+        pages, toc.change_mgmt_pages, _SHEET6_RULES["change_mgmt"], report_to_pdf_page
     )
     access_pages = _collect_candidate_pages(
-        pages, toc.access_mgmt_pages, _SHEET6_RULES["access_mgmt"]
+        pages, toc.access_mgmt_pages, _SHEET6_RULES["access_mgmt"], report_to_pdf_page
     )
     job_pages = _collect_candidate_pages(
-        pages, toc.job_scheduling_pages, _SHEET6_RULES["job_scheduling"]
+        pages, toc.job_scheduling_pages, _SHEET6_RULES["job_scheduling"], report_to_pdf_page
     )
 
     print(
@@ -136,10 +237,77 @@ def _collect_sheet6_candidate_sections(pages: dict[int, str], toc: TOCData) -> t
     )
 
     return (
-        _format_pages(pages, change_pages),
-        _format_pages(pages, access_pages),
-        _format_pages(pages, job_pages),
+        _format_pages(pages, change_pages, pdf_to_report_page),
+        _format_pages(pages, access_pages, pdf_to_report_page),
+        _format_pages(pages, job_pages, pdf_to_report_page),
     )
+
+
+def _collect_sheet8_candidate_section(
+    pages: dict[int, str],
+    toc: TOCData,
+    report_to_pdf_page: dict[int, set[int]],
+    pdf_to_report_page: dict[int, int],
+) -> str:
+    all_pages = set(pages)
+    toc_candidates = _pages_from_range(
+        toc.cuec_pages, all_pages, report_to_pdf_page
+    )
+    candidates: set[int] = set()
+
+    sorted_pages = sorted(pages)
+    collecting = False
+    section_pages: set[int] = set()
+
+    def _is_sheet8_start_page(page_text: str) -> bool:
+        lowered_text = page_text.lower()
+        lines = [line.strip().lower() for line in page_text.splitlines()]
+        has_heading = any(line in _SHEET8_START_PHRASES for line in lines)
+        has_table_header = (
+            "complementary user entity controls" in lowered_text
+            and ("control objective" in lowered_text or "related control objective" in lowered_text)
+            and any(phrase in lowered_text for phrase in _SHEET8_RESPONSIBILITY_PHRASES)
+        )
+        return has_heading or has_table_header
+
+    for page_number in sorted_pages:
+        text = pages[page_number]
+        lowered = text.lower()
+        is_toc_page = page_number <= settings.toc_max_pages and "table of contents" in lowered
+
+        if (
+            not collecting
+            and not is_toc_page
+            and _is_sheet8_start_page(text)
+        ):
+            collecting = True
+
+        if collecting and page_number not in section_pages:
+            if section_pages and any(phrase in lowered for phrase in _SHEET8_STOP_PHRASES):
+                break
+            section_pages.add(page_number)
+
+    if section_pages:
+        candidates.update(toc_candidates or section_pages)
+    else:
+        candidates.update(toc_candidates)
+
+    if not section_pages:
+        for page_number, text in pages.items():
+            lowered = text.lower()
+            has_table_header = (
+                "complementary user entity controls" in lowered
+                and ("control objective" in lowered or "related control objective" in lowered)
+            )
+            if has_table_header:
+                candidates.add(page_number)
+
+    candidate_pages = sorted(candidates)
+    print(
+        f"[EXTRACTOR] Sheet 8 candidate pages: {candidate_pages}",
+        flush=True,
+    )
+    return _format_pages(pages, candidate_pages, pdf_to_report_page)
 
 
 def _extract_sheet2(text: str) -> Sheet2Data:
@@ -178,8 +346,213 @@ def _extract_sheet7(text: str) -> Sheet7Data:
     return Sheet7Data(has_subservice=raw["has_subservice"], organizations=orgs)
 
 
+def _prepare_sheet8_text(text: str) -> str:
+    """
+    Preserve cross-page CUEC table context for the LLM.
+
+    In SOC reports, CUEC tables often have a left "Control Objective" cell that
+    spans multiple rows/pages. pdfplumber converts continuation rows to a blank
+    first column, so we explicitly carry forward the last non-empty objective.
+
+    Some reports use the reverse layout:
+    "Complementary User Entity Controls" in the left column and "Related Control
+    Objectives" in the right column. Those rows are normalized to the standard
+    "| Control Objective | Complementary User Entity Controls |" order before
+    being sent to the LLM.
+    """
+    prepared_lines: list[str] = []
+    normalized_items: list[tuple[int | None, str, str]] = []
+    current_objective = ""
+    current_page: int | None = None
+    inherited_count = 0
+    reversed_rows = 0
+    table_orientation = "objective_left"
+
+    def _logical_lines(raw_text: str) -> list[str]:
+        logical_lines: list[str] = []
+        current_row = ""
+
+        for raw_line in raw_text.splitlines():
+            stripped_line = raw_line.strip()
+            starts_table_row = stripped_line.startswith("|")
+            ends_table_row = stripped_line.endswith("|")
+            is_boundary = (
+                re.match(r"^\[(?:Page|PDF Page)\s+\d+(?:\s*/\s*Report Page\s+\d+)?\]$", stripped_line)
+                or stripped_line == "---"
+            )
+
+            if current_row:
+                if is_boundary:
+                    logical_lines.append(current_row)
+                    current_row = ""
+                    logical_lines.append(raw_line)
+                    continue
+                if starts_table_row:
+                    logical_lines.append(current_row)
+                    current_row = raw_line
+                    if ends_table_row:
+                        logical_lines.append(current_row)
+                        current_row = ""
+                    continue
+
+                current_row += "\n" + stripped_line
+                if ends_table_row:
+                    logical_lines.append(current_row)
+                    current_row = ""
+                continue
+
+            if starts_table_row and not ends_table_row:
+                current_row = raw_line
+                continue
+
+            logical_lines.append(raw_line)
+
+        if current_row:
+            logical_lines.append(current_row)
+
+        return logical_lines
+
+    def _add_cuec_items(page_number: int | None, objective: str, cuec_text: str) -> None:
+        normalized_objective = " ".join(objective.split())
+        normalized_text = " ".join(cuec_text.split())
+        if not normalized_text:
+            return
+
+        parts = [part.strip() for part in re.split(r"\s*•\s*", normalized_text) if part.strip()]
+        if not parts:
+            return
+
+        if not normalized_text.lstrip().startswith("•") and normalized_items:
+            previous_page, previous_objective, previous_text = normalized_items[-1]
+            if not re.search(r"[.;。；]$", previous_text):
+                normalized_items[-1] = (
+                    previous_page,
+                    previous_objective,
+                    f"{previous_text} {parts[0]}",
+                )
+                parts = parts[1:]
+
+        for part in parts:
+            if any(phrase in part.lower() for phrase in _SHEET8_RESPONSIBILITY_PHRASES):
+                normalized_items.append((page_number, normalized_objective, part))
+
+    for line in _logical_lines(text):
+        stripped = line.strip()
+        page_match = re.match(
+            r"^\[(?:Page|PDF Page)\s+(\d+)(?:\s*/\s*Report Page\s+(\d+))?\]$",
+            stripped,
+        )
+        if page_match:
+            current_page = int(page_match.group(2) or page_match.group(1))
+            prepared_lines.append(line)
+            continue
+
+        if not stripped.startswith("|") or stripped.count("|") < 2:
+            prepared_lines.append(line)
+            continue
+
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) < 2:
+            prepared_lines.append(line)
+            continue
+
+        first_cell, second_cell = cells[0], cells[1]
+        lowered_first = first_cell.lower()
+        lowered_second = second_cell.lower()
+
+        if "complementary user entity" in lowered_first and (
+            "related control objective" in lowered_second
+            or "control objective" in lowered_second
+        ):
+            table_orientation = "cuec_left"
+            prepared_lines.append(
+                "| Control Objective | Complementary User Entity Controls |"
+            )
+            continue
+
+        if "control objective" in lowered_first and "complementary user entity" in lowered_second:
+            table_orientation = "objective_left"
+            prepared_lines.append(line)
+            continue
+
+        is_header = (
+            "control objective" in lowered_first
+            or "complementary user entity" in lowered_second
+            or bool(first_cell) and set(first_cell) <= {"-"}
+        )
+
+        if is_header:
+            prepared_lines.append(line)
+            continue
+
+        if table_orientation == "cuec_left":
+            cuec_text, objective = first_cell, second_cell
+            if objective:
+                current_objective = objective
+            elif current_objective and cuec_text:
+                objective = f"{current_objective} [continued from previous row/page]"
+                inherited_count += 1
+
+            if cuec_text:
+                prepared_lines.append(f"| {objective} | {cuec_text} |")
+                _add_cuec_items(current_page, objective, cuec_text)
+                reversed_rows += 1
+            else:
+                prepared_lines.append(line)
+            continue
+
+        objective, cuec_text = first_cell, second_cell
+
+        if objective:
+            current_objective = objective
+            prepared_lines.append(line)
+            _add_cuec_items(current_page, objective, cuec_text)
+            continue
+
+        if current_objective and cuec_text:
+            cells[0] = f"{current_objective} [continued from previous row/page]"
+            prepared_lines.append("| " + " | ".join(cells) + " |")
+            _add_cuec_items(current_page, current_objective, cuec_text)
+            inherited_count += 1
+        else:
+            prepared_lines.append(line)
+
+    note = (
+        "CUEC TABLE CONTINUITY NOTE:\n"
+        "- Some PDF tables span multiple pages. Rows whose Control Objective was blank "
+        "have been filled with the nearest preceding objective and marked as "
+        "'[continued from previous row/page]'.\n"
+        "- If a bullet sentence starts on one page and continues on the next page, merge "
+        "the continuation into the same CUEC item.\n"
+        "- Each bullet point under the Complementary User Entity Controls column is one "
+        "separate Form 107-A Sheet 8 row.\n"
+        "- Some reports put Complementary User Entity Controls in the left column and "
+        "Related Control Objectives in the right column. Those rows have been normalized "
+        "to objective-first table order.\n"
+        f"- Number of rows with inherited objective context: {inherited_count}.\n"
+        f"- Number of reversed-layout rows normalized: {reversed_rows}.\n"
+    )
+    candidate_lines = [
+        "NORMALIZED CUEC ITEM CANDIDATES:",
+        "The following candidates were deterministically split from parsed tables. "
+        "Use them as the primary extraction source, preserving order and wording.",
+    ]
+    for index, (page_number, objective, description) in enumerate(normalized_items, start=1):
+        page_ref = f"Page {page_number}" if page_number else "Page unknown"
+        candidate_lines.append(
+            f"{index}. [{page_ref}] [Objective: {objective}] {description}"
+        )
+
+    return note + "\n" + "\n".join(candidate_lines) + "\n\nRAW CUEC SECTION:\n" + "\n".join(prepared_lines)
+
+
 def _extract_sheet8(text: str) -> Sheet8Data:
-    raw   = dify_client.call_json(_prompt("sheet8_cuec.txt", section_text=text))
+    prepared_text = _prepare_sheet8_text(text)
+    print(
+        f"[EXTRACTOR] Sheet 8 input chars: raw={len(text)}, prepared={len(prepared_text)}",
+        flush=True,
+    )
+    raw   = dify_client.call_json(_prompt("sheet8_cuec.txt", section_text=prepared_text))
     cuecs = [CUECItem(**c) for c in raw.get("cuecs", [])]
     return Sheet8Data(cuecs=cuecs)
 
@@ -208,10 +581,16 @@ def extract(
             progress_cb(step, pct)
 
     pages = load_parsed(parsed_path)
+    report_to_pdf_page, pdf_to_report_page = _build_page_number_maps(pages)
 
     _cb("Locating sections (TOC)", _STEP_PCT["toc"][0])
     toc = _parse_toc(pages)
     print(f"[EXTRACTOR] TOC: system={toc.system_name}, opinion={toc.opinion_pages}, cm={toc.change_mgmt_pages}", flush=True)
+    print(
+        "[EXTRACTOR] Page map sample: "
+        f"{dict(list(sorted(report_to_pdf_page.items()))[:8])}",
+        flush=True,
+    )
     _cb("Sections located", _STEP_PCT["toc"][1])
 
     result = ExtractedFormData(system_name=toc.system_name)
@@ -219,14 +598,22 @@ def extract(
     if 2 in sheets:
         logger.info("Starting Sheet 2 extraction")
         _cb("Extracting report metadata (Sheet 2)", _STEP_PCT[2][0])
-        result.sheet2 = _extract_sheet2(extract_section(pages, toc.opinion_pages))
+        result.sheet2 = _extract_sheet2(
+            _section_from_toc_range(
+                pages, toc.opinion_pages, report_to_pdf_page, pdf_to_report_page
+            )
+        )
         logger.info("Sheet 2 done: %s", result.sheet2)
         _cb("Sheet 2 done", _STEP_PCT[2][1])
 
     if 3 in sheets:
         logger.info("Starting Sheet 3 extraction")
         _cb("Extracting opinion & exceptions (Sheet 3)", _STEP_PCT[3][0])
-        result.sheet3 = _extract_sheet3(extract_section(pages, toc.opinion_pages))
+        result.sheet3 = _extract_sheet3(
+            _section_from_toc_range(
+                pages, toc.opinion_pages, report_to_pdf_page, pdf_to_report_page
+            )
+        )
         logger.info("Sheet 3 done: qualified=%s, exceptions=%d",
                     result.sheet3.has_qualified_opinion, len(result.sheet3.exceptions))
         _cb("Sheet 3 done", _STEP_PCT[3][1])
@@ -234,7 +621,9 @@ def extract(
     if 6 in sheets:
         logger.info("Starting Sheet 6 extraction")
         _cb("Extracting ITGC controls (Sheet 6)", _STEP_PCT[6][0])
-        cm_text, am_text, js_text = _collect_sheet6_candidate_sections(pages, toc)
+        cm_text, am_text, js_text = _collect_sheet6_candidate_sections(
+            pages, toc, report_to_pdf_page, pdf_to_report_page
+        )
         result.sheet6 = _extract_sheet6(
             cm_text,
             am_text,
@@ -246,14 +635,22 @@ def extract(
     if 7 in sheets:
         logger.info("Starting Sheet 7 extraction")
         _cb("Identifying subservice organizations (Sheet 7)", _STEP_PCT[7][0])
-        result.sheet7 = _extract_sheet7(extract_section(pages, toc.subservice_pages))
+        result.sheet7 = _extract_sheet7(
+            _section_from_toc_range(
+                pages, toc.subservice_pages, report_to_pdf_page, pdf_to_report_page
+            )
+        )
         logger.info("Sheet 7 done: has_subservice=%s", result.sheet7.has_subservice)
         _cb("Sheet 7 done", _STEP_PCT[7][1])
 
     if 8 in sheets:
         logger.info("Starting Sheet 8 extraction")
         _cb("Extracting CUECs (Sheet 8)", _STEP_PCT[8][0])
-        result.sheet8 = _extract_sheet8(extract_section(pages, toc.cuec_pages))
+        result.sheet8 = _extract_sheet8(
+            _collect_sheet8_candidate_section(
+                pages, toc, report_to_pdf_page, pdf_to_report_page
+            )
+        )
         logger.info("Sheet 8 done: cuecs=%d", len(result.sheet8.cuecs))
         _cb("Sheet 8 done", _STEP_PCT[8][1])
 

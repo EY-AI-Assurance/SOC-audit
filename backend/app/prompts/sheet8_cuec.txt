@@ -1,22 +1,96 @@
-You are an expert auditor reading a SOC 1 Type II report.
-Below is the Complementary User Entity Controls (CUECs) section.
+You are an expert auditor completing Form 107-A Sheet 8 (Complementary User
+Entity Controls / CUECs) for a SOC 1 Type II report.
 
-Extract ALL CUECs listed. For each one:
-- objective_and_page: the control objective category and page reference as they appear
-  (e.g. "Organizational Controls Page 44", "Access Management Page 45")
-- description: the full CUEC text as stated in the report — do not summarize
+Below is the CUEC / customer responsibility section identified from the report's
+table of contents. In a normal SOC 1 Type II report, CUECs usually exist. Do not
+return an empty list unless the provided section clearly contains no complementary
+user entity controls, customer responsibilities, or user control considerations.
+
+Your task:
+Extract EVERY CUEC / customer responsibility item in the section, in the same
+order as the report.
+
+If the input contains a "NORMALIZED CUEC ITEM CANDIDATES" block, use that block
+as the primary source. Each numbered candidate in that block normally corresponds
+to exactly one output JSON item. Do not omit candidates unless they are clearly
+not user/customer responsibility controls.
+
+Important table handling rules:
+- In many SOC reports, the CUEC section is a large table with two columns:
+  "Control Objective" and "Complementary User Entity Controls".
+- Each separate responsibility statement in the "Complementary User Entity
+  Controls" column is one separate CUEC and must become one separate JSON item.
+- A CUEC may be shown as a bullet point, a numbered item, or a separate table
+  row without any bullet symbol.
+- If each table row contains one customer/user responsibility statement, each
+  row must become one JSON item.
+- If one table cell contains five bullet points or five separate responsibility
+  statements, return five JSON items.
+- If a table continues onto the next PDF page and the Control Objective cell is
+  blank, inherit the nearest previous non-empty Control Objective from the prior
+  row/page.
+- If the input marks a row as "[continued from previous row/page]", use that
+  inherited objective in objective_and_page.
+- If a bullet sentence starts at the bottom of one page and continues at the top
+  of the next page, merge the text into one complete CUEC description. Do not
+  create a separate item for the continuation fragment.
+
+What counts as a CUEC:
+- A sentence or bullet that states what user entities, customers, clients, or
+  customer administrators should do or are responsible for.
+- Common wording includes:
+  "User entities should..."
+  "User entities are responsible for..."
+  "Customers are responsible for..."
+  "Customer administrators are responsible for..."
+  "Clients should..."
+- In row-based tables, each row whose left/right column contains one of the
+  responsibility statements above counts as one CUEC even if there is no bullet
+  symbol.
+
+What does NOT count:
+- Service organization controls.
+- Auditor test procedures or test results.
+- Management assertions.
+- Generic explanatory text that does not assign responsibility to the user
+  entity/customer/client.
+
+Column (I) objective_and_page:
+- Use the nearest preceding control objective, category, or heading from the
+  report, plus the page number from the input page header.
+- If an input page header contains both "PDF Page X" and "Report Page Y", use
+  the Report Page number in objective_and_page.
+- Preserve the report's wording when possible.
+- Examples:
+  "Organizational Controls Page 44"
+  "Access Management Page 45"
+  "Control Objective 10: Controls provide reasonable assurance that logical access... Page 62"
+  "Enterprise Level Control Page 33"
+- If several CUECs share the same heading, repeat the same objective_and_page
+  for each item. Do not leave it blank.
+- If the nearest objective is marked "[continued from previous row/page]", remove
+  that marker in the final JSON and use the inherited objective normally.
+
+Column (II) description:
+- Preserve the original CUEC text.
+- Do not summarize.
+- Do not merge multiple CUECs into one item.
+- Do not split one CUEC into multiple items unless the report clearly lists
+  separate rows, bullets, numbered items, or responsibility statements.
+- If the report is bilingual, preserve both Chinese and English text.
+- If the report is English only, keep English only.
 
 Return ONLY valid JSON — no explanation, no markdown fences:
 {{
   "cuecs": [
     {{
-      "objective_and_page": "<objective + page ref>",
-      "description": "<full CUEC description>"
+      "objective_and_page": "<nearest objective/category heading + Page N>",
+      "description": "<full original CUEC/customer responsibility text>"
     }}
   ]
 }}
 
-Return {{ "cuecs": [] }} if none found.
+Return {{ "cuecs": [] }} only if the provided section clearly has no CUECs.
 
 CUEC SECTION:
 {section_text}
