@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 
-const ALL_SHEETS = [2, 3, 6, 7, 8]
+const DEFAULT_SHEETS = [2, 3, 6, 7, 8]
 const SHEET_LABELS = {
   2: 'Sheet 2 — Report Metadata',
   3: 'Sheet 3 — Opinion & Exceptions',
   6: 'Sheet 6 — ITGC Controls',
   7: 'Sheet 7 — Subservice Organizations',
   8: 'Sheet 8 — CUECs',
+  9: 'Sheet 9 — CSOCs',
 }
 
 export default function NewJobModal({ onClose, onCreated }) {
@@ -15,7 +16,7 @@ export default function NewJobModal({ onClose, onCreated }) {
   const [reports, setReports]           = useState([])
   const [selectedTemplate, setTemplate] = useState('')
   const [selectedReports, setReports_]  = useState([])
-  const [selectedSheets, setSheets]     = useState(ALL_SHEETS)
+  const [selectedSheets, setSheets]     = useState(DEFAULT_SHEETS)
   const [uploading, setUploading]       = useState(false)
   const [submitting, setSubmitting]     = useState(false)
   const [error, setError]               = useState('')
@@ -27,9 +28,25 @@ export default function NewJobModal({ onClose, onCreated }) {
       setTemplates(t.templates || [])
       const ready = (r.reports || []).filter(rep => rep.status === 'ready')
       setReports(ready)
-      if (t.templates?.length > 0) setTemplate(t.templates[0].template_id)
+      if (t.templates?.length > 0) {
+        const firstTemplate = t.templates[0]
+        setTemplate(firstTemplate.template_id)
+        setSheets(firstTemplate.available_sheets?.length ? firstTemplate.available_sheets : DEFAULT_SHEETS)
+      }
     }).catch(e => setError(e.message))
   }, [])
+
+  const selectedTemplateMeta = templates.find(t => t.template_id === selectedTemplate)
+  const availableSheets = selectedTemplateMeta?.available_sheets?.length
+    ? selectedTemplateMeta.available_sheets
+    : DEFAULT_SHEETS
+
+  useEffect(() => {
+    setSheets(prev => {
+      const retained = prev.filter(sheet => availableSheets.includes(sheet))
+      return retained.length ? retained : availableSheets
+    })
+  }, [selectedTemplate])
 
   const toggleReport = (id) =>
     setReports_(prev => prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id])
@@ -37,7 +54,7 @@ export default function NewJobModal({ onClose, onCreated }) {
   const toggleSheet = (s) =>
     setSheets(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
 
-  const allSheetsSelected = selectedSheets.length === ALL_SHEETS.length
+  const allSheetsSelected = availableSheets.every(sheet => selectedSheets.includes(sheet))
 
   const handleUploadReport = async (e) => {
     const file = e.target.files?.[0]
@@ -77,6 +94,7 @@ export default function NewJobModal({ onClose, onCreated }) {
       const res = await api.uploadTemplate(file)
       setTemplates(prev => [...prev, res])
       setTemplate(res.template_id)
+      setSheets(res.available_sheets?.length ? res.available_sheets : DEFAULT_SHEETS)
     } catch (e) {
       setError(e.message)
     }
@@ -168,12 +186,12 @@ export default function NewJobModal({ onClose, onCreated }) {
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-semibold text-gray-700">Sheets to Fill</label>
               <button
-                onClick={() => setSheets(allSheetsSelected ? [] : ALL_SHEETS)}
+                onClick={() => setSheets(allSheetsSelected ? [] : availableSheets)}
                 className="text-xs text-blue-500 hover:underline"
               >{allSheetsSelected ? 'Deselect All' : 'Select All'}</button>
             </div>
             <div className="flex flex-col gap-1">
-              {ALL_SHEETS.map(s => (
+              {availableSheets.map(s => (
                 <label key={s} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 rounded px-2 py-1">
                   <input
                     type="checkbox"

@@ -15,6 +15,10 @@ Sections to locate:
    "Complementary User Entity Control Considerations", "Complementary User Entity
    Responsibilities", "Customer Responsibilities", "User Control Considerations",
    "User Entity Responsibilities", or similar wording.
+7. Complementary Subservice Organization Controls (CSOCs). This section may also
+   be named "Complementary Subservice Organization Control Considerations",
+   "Complementary Sub-service Organization Controls", "Subservice Organization
+   Controls", or similar wording.
 
 Return ONLY valid JSON — no explanation, no markdown fences:
 {{
@@ -24,7 +28,8 @@ Return ONLY valid JSON — no explanation, no markdown fences:
   "access_mgmt_pages": [<start>, <end>],
   "job_scheduling_pages": [<start>, <end>],
   "subservice_pages": [<start>, <end>],
-  "cuec_pages": [<start>, <end>]
+  "cuec_pages": [<start>, <end>],
+  "csoc_pages": [<start>, <end>]
 }}
 
 If a section does not exist, set its range to [0, 0]. For CUECs, do not set [0, 0]

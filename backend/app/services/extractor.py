@@ -7,9 +7,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 from app.models.extraction import (
-    CUECItem, ExceptionItem, ExtractedFormData,
+    CSOCItem, CUECItem, ExceptionItem, ExtractedFormData,
     ITGCSection, QualifiedOpinion,
-    Sheet2Data, Sheet3Data, Sheet6Data, Sheet7Data, Sheet8Data,
+    Sheet2Data, Sheet3Data, Sheet6Data, Sheet7Data, Sheet8Data, Sheet9Data,
     SubserviceOrg, TOCData,
 )
 from app.services.dify_client import dify_client
@@ -557,6 +557,12 @@ def _extract_sheet8(text: str) -> Sheet8Data:
     return Sheet8Data(cuecs=cuecs)
 
 
+def _extract_sheet9(text: str) -> Sheet9Data:
+    raw = dify_client.call_json(_prompt("sheet9_csoc.txt", section_text=text))
+    csocs = [CSOCItem(**c) for c in raw.get("csocs", [])]
+    return Sheet9Data(csocs=csocs)
+
+
 # Progress percentages: (start, end) for each step
 _STEP_PCT = {
     "toc": (5, 15),
@@ -565,6 +571,7 @@ _STEP_PCT = {
     6:     (45, 65),
     7:     (65, 80),
     8:     (80, 95),
+    9:     (95, 98),
 }
 
 
@@ -574,7 +581,7 @@ def extract(
     progress_cb: Callable[[str, int], None] | None = None,
 ) -> ExtractedFormData:
     if sheets is None:
-        sheets = [2, 3, 6, 7, 8]
+        sheets = [2, 3, 6, 7, 8, 9]
 
     def _cb(step: str, pct: int) -> None:
         if progress_cb:
@@ -653,5 +660,24 @@ def extract(
         )
         logger.info("Sheet 8 done: cuecs=%d", len(result.sheet8.cuecs))
         _cb("Sheet 8 done", _STEP_PCT[8][1])
+
+    if 9 in sheets:
+        logger.info("Starting Sheet 9 extraction")
+        _cb("Extracting CSOCs (Sheet 9)", _STEP_PCT[9][0])
+        sheet7_for_dependency = result.sheet7 or _extract_sheet7(
+            _section_from_toc_range(
+                pages, toc.subservice_pages, report_to_pdf_page, pdf_to_report_page
+            )
+        )
+        if sheet7_for_dependency.has_subservice:
+            result.sheet9 = _extract_sheet9(
+                _section_from_toc_range(
+                    pages, toc.csoc_pages, report_to_pdf_page, pdf_to_report_page
+                )
+            )
+        else:
+            result.sheet9 = Sheet9Data(csocs=[])
+        logger.info("Sheet 9 done: csocs=%d", len(result.sheet9.csocs))
+        _cb("Sheet 9 done", _STEP_PCT[9][1])
 
     return result

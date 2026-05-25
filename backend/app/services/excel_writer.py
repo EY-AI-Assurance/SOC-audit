@@ -11,6 +11,7 @@ import shutil
 import zipfile
 from pathlib import Path
 import re
+from copy import copy
 from xml.etree import ElementTree as ET
 
 import openpyxl
@@ -105,12 +106,76 @@ def _write_sheet8(ws, data: ExtractedFormData) -> None:
         _cell(ws, 5 + i, 2).value = cuec.description
 
 
+def _copy_row_style(ws, source_row: int, target_row: int, max_col: int) -> None:
+    ws.row_dimensions[target_row].height = ws.row_dimensions[source_row].height
+    for col in range(1, max_col + 1):
+        source = ws.cell(source_row, col)
+        target = ws.cell(target_row, col)
+        if source.has_style:
+            target._style = copy(source._style)
+        if source.number_format:
+            target.number_format = source.number_format
+        if source.alignment:
+            target.alignment = copy(source.alignment)
+        if source.protection:
+            target.protection = copy(source.protection)
+
+
+def _insert_rows_preserving_merges(ws, row: int, amount: int) -> None:
+    shifted_ranges = []
+    for merged_range in list(ws.merged_cells.ranges):
+        if merged_range.min_row >= row:
+            shifted_ranges.append((
+                merged_range.min_row,
+                merged_range.min_col,
+                merged_range.max_row,
+                merged_range.max_col,
+            ))
+            ws.unmerge_cells(str(merged_range))
+
+    ws.insert_rows(row, amount)
+
+    for min_row, min_col, max_row, max_col in shifted_ranges:
+        ws.merge_cells(
+            start_row=min_row + amount,
+            start_column=min_col,
+            end_row=max_row + amount,
+            end_column=max_col,
+        )
+
+
+def _write_sheet9(ws, data: ExtractedFormData) -> None:
+    csocs = data.sheet9.csocs
+    start_row = 5
+    reserved_rows = 5
+    if len(csocs) > reserved_rows:
+        rows_to_insert = len(csocs) - reserved_rows
+        insert_at = start_row + reserved_rows
+        _insert_rows_preserving_merges(ws, insert_at, rows_to_insert)
+        for row in range(insert_at, insert_at + rows_to_insert):
+            _copy_row_style(ws, start_row + reserved_rows - 1, row, 10)
+
+    for i, csoc in enumerate(csocs):
+        row = start_row + i
+        _cell(ws, row, 1).value = csoc.objective_and_page
+        _cell(ws, row, 2).value = csoc.subservice_org
+        _cell(ws, row, 3).value = csoc.relevant
+        _cell(ws, row, 4).value = csoc.description
+        if csoc.necessary:
+            _cell(ws, row, 5).value = csoc.necessary
+        if csoc.reason:
+            _cell(ws, row, 6).value = csoc.reason
+        if csoc.response:
+            _cell(ws, row, 7).value = csoc.response
+
+
 # ── VML checkbox helpers ──────────────────────────────────────────────────────
 
 _CONTROL_WORKSHEETS = {
     "xl/worksheets/sheet3.xml",
     "xl/worksheets/sheet7.xml",
     "xl/worksheets/sheet8.xml",
+    "xl/worksheets/sheet9.xml",
 }
 
 
@@ -338,6 +403,8 @@ def write_excel(
         _write_sheet7(ws["7.子服务机构"], data)
     if data.sheet8:
         _write_sheet8(ws["8.补偿性用户实体控制"], data)
+    if data.sheet9:
+        _write_sheet9(ws["9.补偿性分包服务机构控制"], data)
 
     wb.save(output_path)
 

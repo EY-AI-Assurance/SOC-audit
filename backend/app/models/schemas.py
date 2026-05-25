@@ -40,6 +40,7 @@ class TemplateInfo(BaseModel):
     template_id: str
     name: str
     uploaded_at: str
+    available_sheets: list[int] = []
 
 
 # ── Job ───────────────────────────────────────────────────────────────────────
@@ -58,6 +59,7 @@ class ReportSummary(BaseModel):
     exception_count: int = 0
     has_subservice: bool = False
     cuec_count: int = 0
+    csoc_count: int = 0
 
 
 class JobReportResult(BaseModel):

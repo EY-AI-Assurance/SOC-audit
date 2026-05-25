@@ -17,6 +17,7 @@ class TOCData(BaseModel):
     job_scheduling_pages: list[int]
     subservice_pages: list[int]
     cuec_pages: list[int]
+    csoc_pages: list[int] = [0, 0]
 
 
 # ── Sheet 2 ───────────────────────────────────────────────────────────────────
@@ -95,6 +96,22 @@ class Sheet8Data(BaseModel):
     cuecs: list[CUECItem] = []
 
 
+# ── Sheet 9 ───────────────────────────────────────────────────────────────────
+
+class CSOCItem(BaseModel):
+    objective_and_page: str
+    subservice_org: str
+    relevant: Literal["Yes", "No"] = "Yes"
+    description: str
+    necessary: Literal["Yes", "No", ""] = ""
+    reason: str = ""
+    response: str = ""
+
+
+class Sheet9Data(BaseModel):
+    csocs: list[CSOCItem] = []
+
+
 # ── Assembled result ──────────────────────────────────────────────────────────
 
 class ExtractedFormData(BaseModel):
@@ -104,3 +121,4 @@ class ExtractedFormData(BaseModel):
     sheet6: Optional[Sheet6Data] = None
     sheet7: Optional[Sheet7Data] = None
     sheet8: Optional[Sheet8Data] = None
+    sheet9: Optional[Sheet9Data] = None

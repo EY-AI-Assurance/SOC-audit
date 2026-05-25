@@ -98,6 +98,7 @@ def _bg_job(job_id: str) -> None:
                 exception_count=len(form_data.sheet3.exceptions) if form_data.sheet3 else 0,
                 has_subservice=form_data.sheet7.has_subservice if form_data.sheet7 else False,
                 cuec_count=len(form_data.sheet8.cuecs) if form_data.sheet8 else 0,
+                csoc_count=len(form_data.sheet9.csocs) if form_data.sheet9 else 0,
             )
 
             print(f"[JOB] Updating status to DONE", flush=True)

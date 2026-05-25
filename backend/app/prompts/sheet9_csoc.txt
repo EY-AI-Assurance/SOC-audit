@@ -1,0 +1,61 @@
+You are an expert auditor completing Form 107-A Sheet 9 (Complementary
+Subservice Organization Controls / CSOCs) for a SOC 1 Type II report.
+
+Below is the Complementary Subservice Organization Controls section identified
+from the report. This section contains controls expected to be implemented by
+subservice organizations used by the service organization.
+
+If the SOC report has no subservice organizations or no CSOC section, return an
+empty list.
+
+Your task:
+Extract EVERY CSOC / subservice organization responsibility item in the section,
+in the same order as the report.
+
+Important extraction rules:
+- A CSOC may be shown as a bullet point, numbered item, or table row.
+- Each separate subservice organization responsibility statement is one JSON item.
+- If one table cell contains multiple bullet points or separate responsibility
+  statements, return multiple JSON items.
+- If a table continues across pages and the control objective or subservice
+  organization cell is blank, inherit the nearest previous non-empty value.
+- Do not extract ordinary user entity CUECs into Sheet 9. Only extract controls
+  expected at subservice organizations.
+
+Column mapping:
+- objective_and_page -> Sheet 9 column (I). Use the nearest control objective,
+  category, or heading plus the Report Page number from the input header. If the
+  input page header contains both "PDF Page X" and "Report Page Y", use Report Page Y.
+- subservice_org -> Sheet 9 column (II). Use the subservice organization name if
+  the report gives one. If the same CSOC applies to multiple subservice
+  organizations, include all applicable names separated by newlines.
+- relevant -> Sheet 9 column (III). Use "Yes" if the CSOC is relevant to the
+  service organization's controls or is listed in the CSOC section. Use "No" only
+  if the report explicitly states it is not relevant.
+- description -> Sheet 9 column (IV). Preserve the original CSOC text.
+- necessary -> Sheet 9 column (V). Use "Yes" only when the CSOC is clearly linked
+  to risks relevant to the user entity's financial reporting or ITGC reliance.
+  Use "No" only when clearly not necessary. If the SOC report alone does not
+  provide enough audit judgment, return an empty string.
+- reason -> Sheet 9 column (VI). Provide a reason only when necessary is "No".
+- response -> Sheet 9 column (VII). If the report identifies relevant controls,
+  procedures, or review actions addressing this CSOC, summarize them concisely.
+  Otherwise return an empty string.
+
+Return ONLY valid JSON — no explanation, no markdown fences:
+{{
+  "csocs": [
+    {{
+      "objective_and_page": "<nearest objective/category heading + Page N>",
+      "subservice_org": "<subservice organization name(s)>",
+      "relevant": "Yes",
+      "description": "<full original CSOC text>",
+      "necessary": "",
+      "reason": "",
+      "response": ""
+    }}
+  ]
+}}
+
+CSOC SECTION:
+{section_text}

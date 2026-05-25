@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile
+from openpyxl import load_workbook
 
 from app.config import settings
 from app.models.schemas import TemplateInfo
@@ -16,9 +17,33 @@ def _meta_path(template_id: str) -> Path:
 
 
 def _all_templates() -> list[dict]:
+    templates = []
+    for p in sorted(settings.templates_dir.glob("*_meta.json")):
+        meta = json.loads(p.read_text(encoding="utf-8"))
+        template_path = Path(meta.get("path", ""))
+        if "available_sheets" not in meta and template_path.exists():
+            meta["available_sheets"] = _detect_available_sheets(template_path)
+            p.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        templates.append(meta)
+    return templates
+
+
+def _detect_available_sheets(template_path: Path) -> list[int]:
+    implemented = {
+        2: "2.",
+        3: "3.",
+        6: "6.",
+        7: "7.",
+        8: "8.",
+        9: "9.",
+    }
+    wb = load_workbook(template_path, read_only=True)
+    sheet_names = [name.strip() for name in wb.sheetnames]
+    wb.close()
     return [
-        json.loads(p.read_text(encoding="utf-8"))
-        for p in sorted(settings.templates_dir.glob("*_meta.json"))
+        sheet_number
+        for sheet_number, prefix in implemented.items()
+        if any(name.startswith(prefix) for name in sheet_names)
     ]
 
 
@@ -40,6 +65,7 @@ async def upload_template(file: UploadFile):
         "template_id": tid,
         "name": file.filename,
         "path": str(dest),
+        "available_sheets": _detect_available_sheets(dest),
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
     _meta_path(tid).write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
