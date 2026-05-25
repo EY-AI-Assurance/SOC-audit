@@ -6,6 +6,14 @@ Determine whether the auditor issued a qualified opinion (reservations, exceptio
 findings in the opinion paragraph itself). If yes, extract the description and any explanation
 of why it may or may not be relevant to audit scope.
 
+Practical default:
+Most SOC 1 Type II reports have an unqualified opinion and no test exceptions. Do NOT infer a
+qualified opinion or exception from generic wording such as "reasonable assurance", "limitations",
+"complementary user entity controls", or ordinary test result descriptions. Only set
+has_qualified_opinion=true when the opinion paragraph explicitly states qualified/adverse/disclaimer
+or equivalent reservation wording. Only add exceptions when the test result explicitly says an
+exception, deviation, deficiency, or failure was noted.
+
 Task 2 — Test Exceptions / Deviations:
 Extract ALL test exceptions or deviations listed in the report's test results. For each one:
 - index: control ID or page reference (e.g. "CC6.1", "Page 45")
@@ -35,6 +43,8 @@ Return ONLY valid JSON — no explanation, no markdown fences:
 }}
 
 Set "opinion" to null if no qualified opinion. Set "exceptions" to [] if none.
+When has_qualified_opinion=false and exceptions=[], the Excel writer will tick the two top
+checkboxes on Sheet 3: unqualified opinion and no test exceptions.
 
 REPORT TEXT:
 {section_text}

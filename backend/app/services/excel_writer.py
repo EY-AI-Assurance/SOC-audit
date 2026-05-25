@@ -10,6 +10,8 @@ cannot touch, so it is toggled via direct ZIP/XML manipulation.
 import shutil
 import zipfile
 from pathlib import Path
+import re
+from xml.etree import ElementTree as ET
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
@@ -103,20 +105,211 @@ def _write_sheet8(ws, data: ExtractedFormData) -> None:
         _cell(ws, 5 + i, 2).value = cuec.description
 
 
-# ── VML checkbox helper ───────────────────────────────────────────────────────
+# ── VML checkbox helpers ──────────────────────────────────────────────────────
 
-def _tick_no_subservice_checkbox(output_path: Path) -> None:
-    """Tick the Sheet 7 'no subservice organisations' checkbox via ZIP XML."""
+_CONTROL_WORKSHEETS = {
+    "xl/worksheets/sheet3.xml",
+    "xl/worksheets/sheet7.xml",
+    "xl/worksheets/sheet8.xml",
+}
+
+
+def _rels_owner_worksheet(rel_path: str) -> str:
+    return rel_path.replace("xl/worksheets/_rels/", "xl/worksheets/").replace(".rels", "")
+
+
+def _worksheet_rels_path(worksheet_path: str) -> str:
+    return worksheet_path.replace("xl/worksheets/", "xl/worksheets/_rels/") + ".rels"
+
+
+def _resolve_rel_target(rel_path: str, target: str) -> str:
+    source_dir = Path(rel_path).parent.parent
+    parts: list[str] = []
+    for part in (source_dir / target).as_posix().split("/"):
+        if part == "..":
+            if parts:
+                parts.pop()
+        elif part and part != ".":
+            parts.append(part)
+    return "/".join(parts)
+
+
+def _control_related_parts(template_files: dict[str, bytes]) -> set[str]:
+    parts = set(_CONTROL_WORKSHEETS)
+    rel_ns = {"rel": "http://schemas.openxmlformats.org/package/2006/relationships"}
+
+    for worksheet_path in _CONTROL_WORKSHEETS:
+        rel_path = _worksheet_rels_path(worksheet_path)
+        if rel_path not in template_files:
+            continue
+        parts.add(rel_path)
+        root = ET.fromstring(template_files[rel_path])
+        for rel in root.findall("rel:Relationship", rel_ns):
+            target = rel.attrib.get("Target", "")
+            if not target or "://" in target:
+                continue
+            resolved = _resolve_rel_target(rel_path, target)
+            if resolved in template_files:
+                parts.add(resolved)
+
+    return parts
+
+
+def _merge_worksheet_root_attrs(output_xml: str, template_xml: str) -> str:
+    output_root_match = re.search(r"<worksheet\b[^>]*>", output_xml)
+    template_root_match = re.search(r"<worksheet\b[^>]*>", template_xml)
+    if not output_root_match or not template_root_match:
+        return output_xml
+
+    output_root = output_root_match.group(0)
+    template_root = template_root_match.group(0)
+
+    for attr in re.findall(r'\s(?:xmlns:[\w]+|mc:Ignorable|xr:uid)="[^"]*"', template_root):
+        attr_name = attr.strip().split("=", 1)[0]
+        output_root = re.sub(rf'\s{re.escape(attr_name)}="[^"]*"', "", output_root)
+        output_root = output_root[:-1] + attr + ">"
+
+    return (
+        output_xml[:output_root_match.start()]
+        + output_root
+        + output_xml[output_root_match.end():]
+    )
+
+
+def _add_worksheet_control_namespaces(output_xml: str) -> str:
+    root_match = re.search(r"<worksheet\b[^>]*>", output_xml)
+    if not root_match:
+        return output_xml
+
+    root = root_match.group(0)
+    additions = {
+        "xmlns:r": 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
+        "xmlns:xdr": 'xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"',
+        "xmlns:x14": 'xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"',
+        "xmlns:mc": 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"',
+        "xmlns:x14ac": 'xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac"',
+        "xmlns:xr": 'xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision"',
+        "xmlns:xr2": 'xmlns:xr2="http://schemas.microsoft.com/office/spreadsheetml/2015/revision2"',
+        "xmlns:xr3": 'xmlns:xr3="http://schemas.microsoft.com/office/spreadsheetml/2016/revision3"',
+        "xmlns:xm": 'xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"',
+        "mc:Ignorable": 'mc:Ignorable="x14ac xr xr2 xr3"',
+    }
+
+    for marker, attr in additions.items():
+        if marker not in root:
+            root = root[:-1] + f" {attr}>"
+
+    root = re.sub(
+        r'mc:Ignorable="[^"]*"',
+        'mc:Ignorable="x14ac xr xr2 xr3"',
+        root,
+    )
+
+    return output_xml[:root_match.start()] + root + output_xml[root_match.end():]
+
+
+def _extract_worksheet_control_tail(template_xml: str) -> str:
+    start = template_xml.find("<legacyDrawing")
+    if start == -1:
+        return ""
+    end = template_xml.rfind("</worksheet>")
+    if end == -1:
+        return ""
+    return template_xml[start:end]
+
+
+def _restore_worksheet_controls(files: dict[str, bytes], template_files: dict[str, bytes]) -> None:
+    for name in _CONTROL_WORKSHEETS:
+        if name not in template_files:
+            continue
+        template_content = template_files[name]
+
+        tail = _extract_worksheet_control_tail(template_content.decode("utf-8"))
+        if not tail or name not in files:
+            continue
+
+        output_xml = files[name].decode("utf-8")
+        if "<legacyDrawing" in output_xml:
+            continue
+
+        output_xml = _merge_worksheet_root_attrs(output_xml, template_content.decode("utf-8"))
+        output_xml = output_xml.replace("</worksheet>", f"{tail}</worksheet>")
+        files[name] = output_xml.encode("utf-8")
+
+
+def _merge_content_types(
+    files: dict[str, bytes],
+    template_files: dict[str, bytes],
+    copied_parts: set[str],
+) -> None:
+    if "[Content_Types].xml" not in files or "[Content_Types].xml" not in template_files:
+        return
+
+    output_xml = files["[Content_Types].xml"].decode("utf-8")
+    template_xml = template_files["[Content_Types].xml"].decode("utf-8")
+
+    needed_tags = []
+    for tag in re.findall(r"<Default\b[^>]*/>", template_xml):
+        if 'Extension="vml"' in tag or 'Extension="bin"' in tag:
+            needed_tags.append(tag)
+    for tag in re.findall(r"<Override\b[^>]*/>", template_xml):
+        part_match = re.search(r'PartName="/([^"]+)"', tag)
+        if part_match and part_match.group(1) in copied_parts:
+            needed_tags.append(tag)
+
+    for tag in needed_tags:
+        part_match = re.search(r'(?:PartName|Extension)="([^"]+)"', tag)
+        marker = part_match.group(1) if part_match else tag
+        if marker not in output_xml:
+            output_xml = output_xml.replace("</Types>", f"{tag}</Types>")
+
+    files["[Content_Types].xml"] = output_xml.encode("utf-8")
+
+
+def _set_checkbox_checked(xml: str, checked: bool) -> str:
+    if checked:
+        if 'checked="Checked"' in xml:
+            return xml
+        return xml.replace('objectType="CheckBox"', 'objectType="CheckBox" checked="Checked"')
+    return re.sub(r'\schecked="[^"]+"', "", xml)
+
+
+def _restore_excel_controls(
+    template_path: Path,
+    output_path: Path,
+    *,
+    tick_unqualified_opinion: bool,
+    tick_no_test_exceptions: bool,
+    tick_no_subservice: bool,
+) -> None:
+    with zipfile.ZipFile(template_path, "r") as zin:
+        template_files = {name: zin.read(name) for name in zin.namelist()}
     with zipfile.ZipFile(output_path, "r") as zin:
         files = {name: zin.read(name) for name in zin.namelist()}
 
-    target = "xl/ctrlProps/ctrlProp14.xml"  # TODO: verify index against template
-    if target in files:
-        xml = files[target].decode("utf-8").replace(
-            'objectType="CheckBox"',
-            'objectType="CheckBox" checked="Checked"',
-        )
-        files[target] = xml.encode("utf-8")
+    copied_parts = _control_related_parts(template_files)
+    for name in copied_parts:
+        if name in template_files and name not in _CONTROL_WORKSHEETS:
+            files[name] = template_files[name]
+
+    _restore_worksheet_controls(files, template_files)
+    _merge_content_types(files, template_files, copied_parts)
+
+    checkbox_states = {
+        # Sheet 3: no test exceptions/deviations
+        "xl/ctrlProps/ctrlProp1.xml": tick_no_test_exceptions,
+        # Sheet 3: unqualified opinion
+        "xl/ctrlProps/ctrlProp2.xml": tick_unqualified_opinion,
+        # Sheet 7: no indexed subservice organizations
+        "xl/ctrlProps/ctrlProp8.xml": tick_no_subservice,
+    }
+
+    for target, checked in checkbox_states.items():
+        if target in files:
+            files[target] = _set_checkbox_checked(
+                files[target].decode("utf-8"),
+                checked,
+            ).encode("utf-8")
 
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zout:
         for name, content in files.items():
@@ -148,7 +341,16 @@ def write_excel(
 
     wb.save(output_path)
 
-    if data.sheet7 and not data.sheet7.has_subservice:
-        _tick_no_subservice_checkbox(output_path)
+    _restore_excel_controls(
+        template_path,
+        output_path,
+        tick_unqualified_opinion=bool(
+            data.sheet3 and not data.sheet3.has_qualified_opinion
+        ),
+        tick_no_test_exceptions=bool(
+            data.sheet3 and not data.sheet3.exceptions
+        ),
+        tick_no_subservice=bool(data.sheet7 and not data.sheet7.has_subservice),
+    )
 
     return output_path
