@@ -1,4 +1,5 @@
 import logging
+import json
 import re
 from pathlib import Path
 from typing import Callable
@@ -64,6 +65,8 @@ _SHEET8_STOP_PHRASES = [
     "complementary sub-service organization controls",
     "subservice organization controls",
     "sub-service organization controls",
+    "section iv - description",
+    "section iv – description",
     "section v",
     "other information",
 ]
@@ -75,6 +78,9 @@ _SHEET8_RESPONSIBILITY_PHRASES = [
     "customer administrators are responsible",
     "clients should",
 ]
+
+_SHEET8_BULLET_PATTERN = r"\s*[•▪●◼■\uf06e]\s*"
+_SHEET8_CLEAN_CHUNK_SIZE = 12
 
 
 def _prompt(name: str, **kwargs) -> str:
@@ -92,14 +98,28 @@ def _parse_toc(pages: dict[int, str]) -> TOCData:
 
 def _detect_report_page_number(text: str) -> int | None:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    page_number_candidates: list[int] = []
+    page_number_candidates: list[tuple[int, int]] = []
 
-    for line in lines:
+    for index, line in enumerate(lines):
         match = re.fullmatch(r"-?\s*(\d{1,4})\s*-?", line)
         if match:
-            page_number_candidates.append(int(match.group(1)))
+            page_number_candidates.append((index, int(match.group(1))))
 
-    return page_number_candidates[-1] if page_number_candidates else None
+    for index, page_number in page_number_candidates:
+        previous_context = " ".join(lines[max(0, index - 4):index]).lower()
+        if (
+            "intended solely" in previous_context
+            or "should not be, used" in previous_context
+            or "should not be used" in previous_context
+        ):
+            return page_number
+
+    for index, page_number in page_number_candidates:
+        next_line = lines[index + 1] if index + 1 < len(lines) else ""
+        if page_number > 5 and next_line.startswith("|"):
+            return page_number
+
+    return page_number_candidates[-1][1] if page_number_candidates else None
 
 
 def _build_page_number_maps(pages: dict[int, str]) -> tuple[dict[int, set[int]], dict[int, int]]:
@@ -288,7 +308,7 @@ def _collect_sheet8_candidate_section(
             section_pages.add(page_number)
 
     if section_pages:
-        candidates.update(toc_candidates or section_pages)
+        candidates.update(section_pages)
     else:
         candidates.update(toc_candidates)
 
@@ -346,7 +366,7 @@ def _extract_sheet7(text: str) -> Sheet7Data:
     return Sheet7Data(has_subservice=raw["has_subservice"], organizations=orgs)
 
 
-def _prepare_sheet8_text(text: str) -> str:
+def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
     """
     Preserve cross-page CUEC table context for the LLM.
 
@@ -412,17 +432,28 @@ def _prepare_sheet8_text(text: str) -> str:
 
         return logical_lines
 
+    def _looks_like_cuec_responsibility(text_part: str) -> bool:
+        lowered = text_part.lower()
+        lowered = re.sub(r"(?<=[a-z])\d+(?=[a-z])", "", lowered)
+        lowered = re.sub(r"\b\d+(?=[a-z])", "", lowered)
+        lowered = lowered.replace("entitie-s", "entities")
+        return any(phrase in lowered for phrase in _SHEET8_RESPONSIBILITY_PHRASES)
+
     def _add_cuec_items(page_number: int | None, objective: str, cuec_text: str) -> None:
         normalized_objective = " ".join(objective.split())
         normalized_text = " ".join(cuec_text.split())
         if not normalized_text:
             return
 
-        parts = [part.strip() for part in re.split(r"\s*•\s*", normalized_text) if part.strip()]
+        parts = [
+            part.strip()
+            for part in re.split(_SHEET8_BULLET_PATTERN, normalized_text)
+            if part.strip()
+        ]
         if not parts:
             return
 
-        if not normalized_text.lstrip().startswith("•") and normalized_items:
+        if not re.match(_SHEET8_BULLET_PATTERN, normalized_text.lstrip()) and normalized_items:
             previous_page, previous_objective, previous_text = normalized_items[-1]
             if not re.search(r"[.;。；]$", previous_text):
                 normalized_items[-1] = (
@@ -433,7 +464,7 @@ def _prepare_sheet8_text(text: str) -> str:
                 parts = parts[1:]
 
         for part in parts:
-            if any(phrase in part.lower() for phrase in _SHEET8_RESPONSIBILITY_PHRASES):
+            if _looks_like_cuec_responsibility(part):
                 normalized_items.append((page_number, normalized_objective, part))
 
     for line in _logical_lines(text):
@@ -537,29 +568,129 @@ def _prepare_sheet8_text(text: str) -> str:
         "The following candidates were deterministically split from parsed tables. "
         "Use them as the primary extraction source, preserving order and wording.",
     ]
+    deterministic_cuecs: list[CUECItem] = []
+    seen_cuecs: set[tuple[str, str]] = set()
     for index, (page_number, objective, description) in enumerate(normalized_items, start=1):
         page_ref = f"Page {page_number}" if page_number else "Page unknown"
         candidate_lines.append(
             f"{index}. [{page_ref}] [Objective: {objective}] {description}"
         )
+        objective_clean = objective.replace("[continued from previous row/page]", "").strip()
+        objective_and_page = (
+            f"{objective_clean} Page {page_number}"
+            if page_number
+            else objective_clean
+        )
+        key = (objective_and_page, description)
+        if key not in seen_cuecs:
+            deterministic_cuecs.append(
+                CUECItem(
+                    objective_and_page=objective_and_page,
+                    description=description,
+                )
+            )
+            seen_cuecs.add(key)
 
-    return note + "\n" + "\n".join(candidate_lines) + "\n\nRAW CUEC SECTION:\n" + "\n".join(prepared_lines)
+    prepared_text = (
+        note
+        + "\n"
+        + "\n".join(candidate_lines)
+        + "\n\nRAW CUEC SECTION:\n"
+        + "\n".join(prepared_lines)
+    )
+    return prepared_text, deterministic_cuecs
 
 
 def _extract_sheet8(text: str) -> Sheet8Data:
-    prepared_text = _prepare_sheet8_text(text)
+    prepared_text, deterministic_cuecs = _prepare_sheet8_text(text)
     print(
-        f"[EXTRACTOR] Sheet 8 input chars: raw={len(text)}, prepared={len(prepared_text)}",
+        "[EXTRACTOR] Sheet 8 input chars: "
+        f"raw={len(text)}, prepared={len(prepared_text)}, "
+        f"deterministic_cuecs={len(deterministic_cuecs)}",
         flush=True,
     )
+
+    if len(deterministic_cuecs) >= 2:
+        return Sheet8Data(cuecs=_clean_sheet8_cuecs(deterministic_cuecs))
+
     raw   = dify_client.call_json(_prompt("sheet8_cuec.txt", section_text=prepared_text))
     cuecs = [CUECItem(**c) for c in raw.get("cuecs", [])]
-    return Sheet8Data(cuecs=cuecs)
+    return Sheet8Data(cuecs=_clean_sheet8_cuecs(cuecs) if len(cuecs) >= 2 else cuecs)
+
+
+def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
+    cleaned: list[CUECItem] = []
+
+    for start in range(0, len(cuecs), _SHEET8_CLEAN_CHUNK_SIZE):
+        chunk = cuecs[start:start + _SHEET8_CLEAN_CHUNK_SIZE]
+        payload = [
+            {
+                "index": start + offset + 1,
+                "objective_and_page": item.objective_and_page,
+                "description": item.description,
+            }
+            for offset, item in enumerate(chunk)
+        ]
+
+        try:
+            raw = dify_client.call_json(
+                _prompt(
+                    "sheet8_clean_cuec.txt",
+                    items_json=json.dumps(payload, ensure_ascii=False, indent=2),
+                )
+            )
+            returned = raw.get("cuecs", []) if isinstance(raw, dict) else raw
+            if not isinstance(returned, list):
+                raise ValueError("Sheet 8 clean response must be a JSON object or array")
+        except Exception as exc:
+            print(f"[EXTRACTOR] Sheet 8 clean failed, keeping original chunk: {exc}", flush=True)
+            cleaned.extend(chunk)
+            continue
+
+        if len(returned) != len(chunk):
+            print(
+                "[EXTRACTOR] Sheet 8 clean count mismatch, keeping original chunk: "
+                f"expected={len(chunk)}, got={len(returned)}",
+                flush=True,
+            )
+            cleaned.extend(chunk)
+            continue
+
+        chunk_cleaned: list[CUECItem] = []
+        valid = True
+        for original, returned_item, expected in zip(chunk, returned, payload):
+            if returned_item.get("index") != expected["index"]:
+                valid = False
+                break
+            chunk_cleaned.append(
+                CUECItem(
+                    objective_and_page=returned_item.get(
+                        "objective_and_page",
+                        original.objective_and_page,
+                    ),
+                    description=returned_item.get("description", original.description),
+                )
+            )
+
+        if valid:
+            cleaned.extend(chunk_cleaned)
+        else:
+            print("[EXTRACTOR] Sheet 8 clean index mismatch, keeping original chunk", flush=True)
+            cleaned.extend(chunk)
+
+    print(
+        f"[EXTRACTOR] Sheet 8 cleaned CUECs: input={len(cuecs)}, output={len(cleaned)}",
+        flush=True,
+    )
+    return cleaned
 
 
 def _extract_sheet9(text: str) -> Sheet9Data:
     raw = dify_client.call_json(_prompt("sheet9_csoc.txt", section_text=text))
-    csocs = [CSOCItem(**c) for c in raw.get("csocs", [])]
+    raw_csocs = raw.get("csocs", []) if isinstance(raw, dict) else raw
+    if not isinstance(raw_csocs, list):
+        raise ValueError("Sheet 9 response must be a JSON object with 'csocs' or a JSON array")
+    csocs = [CSOCItem(**c) for c in raw_csocs]
     return Sheet9Data(csocs=csocs)
 
 

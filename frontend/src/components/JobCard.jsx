@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+
 const STATUS = {
   processing: { label: 'Processing', badge: 'bg-blue-100 text-blue-700', icon: '⏳' },
   done:       { label: 'Done',       badge: 'bg-green-100 text-green-700', icon: '✅' },
@@ -12,9 +14,41 @@ function formatDate(iso) {
   })
 }
 
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return 'Estimating...'
+
+  const totalSeconds = Math.max(0, Math.round(ms / 1000))
+  if (totalSeconds < 60) return `${totalSeconds}s`
+
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes >= 10) return `${minutes}m`
+  return `${minutes}m ${seconds}s`
+}
+
+function estimateRemaining(createdAt, progress, now) {
+  if (!createdAt || progress <= 0 || progress >= 100) return null
+
+  const started = new Date(createdAt).getTime()
+  const elapsed = now - started
+  if (!Number.isFinite(elapsed) || elapsed <= 0) return null
+
+  return elapsed * ((100 - progress) / progress)
+}
+
 export default function JobCard({ job, onDownload, onDelete }) {
+  const [now, setNow] = useState(Date.now())
   const s = STATUS[job.status] || STATUS.processing
   const reportNames = job.reports.map(r => r.filename.replace('.pdf', '')).join(' + ')
+
+  useEffect(() => {
+    if (job.status !== 'processing') return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [job.status])
 
   // For processing jobs, show progress of the current active report
   const activeReport = job.reports.find(r => r.status === 'PROCESSING')
@@ -22,6 +56,8 @@ export default function JobCard({ job, onDownload, onDelete }) {
   const overallProgress = job.reports.length
     ? Math.round(job.reports.reduce((sum, r) => sum + r.progress, 0) / job.reports.length)
     : 0
+  const remainingMs = estimateRemaining(job.created_at, overallProgress, now)
+  const elapsedMs = now - new Date(job.created_at).getTime()
 
   const doneReports = job.reports.filter(r => r.status === 'DONE')
 
@@ -56,6 +92,12 @@ export default function JobCard({ job, onDownload, onDelete }) {
               className="h-full bg-[#FFE600] rounded-full transition-all duration-500"
               style={{ width: `${overallProgress}%` }}
             />
+          </div>
+          <div className="flex justify-between text-[11px] text-gray-400 mt-1">
+            <span>Elapsed: {formatDuration(elapsedMs)}</span>
+            <span>
+              ETA: {remainingMs === null ? 'Estimating...' : formatDuration(remainingMs)}
+            </span>
           </div>
         </div>
       )}

@@ -1,0 +1,34 @@
+You are cleaning OCR artifacts in Form 107-A Sheet 8 CUEC text.
+
+Input is a JSON array of already-extracted CUEC rows. These rows were selected
+by deterministic parsing. Do NOT decide whether a row is relevant. Do NOT filter,
+remove, merge, split, summarize, reorder, or add rows.
+
+Your only task is to clean obvious OCR noise while preserving the original meaning
+and wording as much as possible.
+
+Clean examples:
+- "should8 establish" -> "should establish"
+- "according to3 their needs" -> "according to their needs"
+- isolated single digits inserted inside sentences should be removed when they
+  are clearly OCR artifacts
+- "s ecurity" -> "security" when the split is clearly an OCR artifact
+- remove stray page/footer digits embedded in the sentence
+
+Do not remove legitimate numbers, standards, product names, dates, or version
+numbers, such as TLS 1.2, ISO 27001, SOC 1, Type II, MFA, ACL, RAM, CMK, ECS.
+
+Return EXACTLY the same number of rows in EXACTLY the same order. Preserve each
+row's index. Return ONLY valid JSON:
+{{
+  "cuecs": [
+    {{
+      "index": 1,
+      "objective_and_page": "<cleaned objective/page>",
+      "description": "<cleaned description>"
+    }}
+  ]
+}}
+
+CUEC ROWS TO CLEAN:
+{items_json}

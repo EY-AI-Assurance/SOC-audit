@@ -37,38 +37,128 @@ IMPORTANT — page_refs format:
 - Use "~" for page ranges (not "-").
 - Include the narrative pages AND the control objective/test table pages.
 
-Risk rows and what controls belong to each:
+Risk rows and RCM-based classification guidance:
+
+Use the EY RCM references below only to understand the risk intent. Never output
+EY RCM IDs such as MC-D2-R3-C4, MA-D1-R1-C1, or MO-D1-R2-C3. Output only SOC
+report control IDs exactly as they appear in the report.
 
 CHANGE MANAGEMENT (I):
-  [0] Programs or changes may not function as intended or may be inappropriate
-      → controls for: change testing, change approval, UAT, peer review, version/release validation
-      → do NOT include: rollback, change notification to users, post-deployment monitoring
-  [1] Developers may move unauthorized or untested changes to production
-      → controls for: segregation of duties between dev/prod, production access restrictions,
-        deployment authorization, privileged access controls that gate production deployment
-      → do NOT include: change testing/approval (those belong to risk [0])
+  [0] Programs or changes may not function as intended or may be inappropriate.
+      EY RCM intent: MC-D1-R1, MC-D1-R2, MC-D2-R3, MC-D2-R4.
+      Include SOC controls whose primary purpose is:
+        - change testing before production;
+        - UAT, business-user testing, IT-user testing, or non-developer testing;
+        - change approval before production;
+        - timely post-implementation validation;
+        - validation that changes are appropriate for the business or IT environment.
+      Exclude controls that are only about:
+        - production access restriction;
+        - developer segregation of duties;
+        - emergency access;
+        - generic monitoring/logging of unauthorized production changes, unless the
+          control specifically validates testing, approval, or implementation.
+
+  [1] Developers may move unauthorized or untested changes to production.
+      EY RCM intent: MC-D2-R5, MC-D2-R14, MC-D2-R15.
+      Include SOC controls whose primary purpose is:
+        - production environment access restricted to appropriate non-developers;
+        - move-to-production or deployment tool access restriction;
+        - segregation between development and production deployment;
+        - deployment authorization controls that gate production migration;
+        - developer production changes logged and compared to approved requests;
+        - emergency or temporary ID pre-approval, logging, and post-change review;
+        - restricted access to change move-to-production tool configuration.
+      Exclude controls that are only about:
+        - ordinary change testing, UAT, or business approval;
+        - generic change management policy text without production deployment access control.
 
 ACCESS MANAGEMENT (II):
-  [0] IT environment may be insecure due to improper security configuration
-      → controls for: network isolation, firewall/security groups, OS/image hardening,
-        vulnerability scanning, security baselines, credential/key security, encryption settings
-      → do NOT include: user provisioning or access review (those belong to risks [1] and [2])
-  [1] Inappropriate access may be granted to IT privileged users or business users
-      → controls for: access provisioning policy, joiner process, request/approval workflow,
-        least-privilege, role/permission assignment
-      → Note: privileged access restriction controls (e.g., root password, bastion host) also appear here
-        if they govern who can be granted privileged access
-  [2] Access rights may become inappropriate over time
-      → controls for: periodic access review, recertification, termination/offboarding,
-        role-change deprovisioning
+  [0] IT environment may be insecure due to improper security configuration.
+      EY RCM intent: MA-D1-R1, MA-D1-R2, MA-D1-R3.
+      Include SOC controls whose primary purpose is:
+        - password complexity, account lockout, MFA, or credential security;
+        - default password change or disabling default accounts;
+        - security baseline, hardening, firewall, network, or encryption configuration;
+        - vulnerability scanning or security configuration review;
+        - periodic verification of key security settings;
+        - logging or monitoring changes to key security settings;
+        - restricted access to change security monitoring configurations.
+      Exclude controls that are only about:
+        - user access request approval;
+        - access provisioning;
+        - periodic user access review;
+        - termination or offboarding.
+
+  [1] IT privileged user or business user access requests may be inappropriate.
+      EY RCM intent: MA-D2-R1, MA-D2-R2, MA-D2-R7, MA-D2-R8, MA-D2-R9,
+      MA-SI-D5-R7, MA-SI-D5-R8.
+      Include SOC controls whose primary purpose is:
+        - access request approval before granting access;
+        - access granted matches access approved;
+        - role or permission assignment based on job responsibility;
+        - least privilege or privileged access approval;
+        - access provisioning workflow;
+        - approver matrix configuration or approval workflow routing;
+        - access to the approval/provisioning tool restricted to appropriate users.
+      Exclude controls that are only about:
+        - periodic access review;
+        - termination-only processing;
+        - password, MFA, or security baseline controls unless tied to access granting.
+
+  [2] Access rights may become inappropriate over time.
+      EY RCM intent: MA-D2-R3, MA-D2-R4, MA-D3-R5.
+      Include SOC controls whose primary purpose is:
+        - termination or leaver access removal;
+        - role-change access modification;
+        - periodic user access review or recertification;
+        - role composition review;
+        - segregation-of-duties review;
+        - management verification that access remains appropriate.
+      Exclude controls that are only about:
+        - initial access approval;
+        - password, MFA, or security baseline;
+        - one-time provisioning accuracy checks unless the control is also periodic.
 
 JOB SCHEDULING (III):
-  [0] Inappropriate jobs may be scheduled
-      → controls for: job scheduling approval, change controls for batch jobs
-  [1] Inappropriate access to the job scheduler
-      → controls for: access controls to scheduling systems, privileged access to job scheduler
-  [2] Incomplete or erroneous scheduled jobs may not be addressed properly
-      → controls for: job monitoring, error alerting, exception handling, failed-job response
+  [0] Jobs may not be scheduled accurately.
+      EY RCM intent: MO-D1-R1.
+      Include SOC controls whose primary purpose is:
+        - production job schedule changes verified before use;
+        - job schedule changes approved or reviewed;
+        - current job schedules periodically compared with prior schedules;
+        - job schedule changes agreed to supporting documentation;
+        - controls over changes to production job schedules.
+      Exclude controls that are only about:
+        - failed job monitoring;
+        - incident response;
+        - scheduler access restriction.
+
+  [1] Access to the job scheduler may be inappropriate.
+      EY RCM intent: no direct separate row; map by analogy to Manage Access
+      controls for tools and privileged systems.
+      Include SOC controls whose primary purpose is:
+        - access to job scheduler restricted to authorized users;
+        - privileged access to scheduling tool approved or reviewed;
+        - scheduler administrator access restricted;
+        - access to scheduler configuration restricted;
+        - scheduler user access periodically reviewed.
+      Exclude controls that are only about:
+        - job schedule review;
+        - failed job alerts;
+        - operator monitoring.
+
+  [2] Incomplete or erroneous scheduled jobs may not be addressed properly.
+      EY RCM intent: MO-D1-R2.
+      Include SOC controls whose primary purpose is:
+        - IT personnel monitor job execution;
+        - failed or incomplete jobs generate alerts;
+        - operators investigate and resolve failed jobs;
+        - job exceptions are tracked, escalated, and remediated.
+      Exclude controls that are only about:
+        - job schedule setup approval;
+        - scheduler access restriction;
+        - change management of job schedules.
 
 Return ONLY valid JSON — no explanation, no markdown fences:
 {{
