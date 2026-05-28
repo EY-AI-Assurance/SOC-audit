@@ -4,10 +4,18 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # ── LLM API (currently Bailian; swap dify_client.py to switch providers) ──
+    # ── LLM API ────────────────────────────────────────────────────────────────
+    llm_provider: str = "openai_compatible"
+
+    # OpenAI-compatible provider, e.g. Bailian / iFlytek MaaS
     bailian_api_key: str = ""
     bailian_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     bailian_model: str = "qwen-turbo"
+
+    # Dify Chatflow API
+    dify_base_url: str = ""
+    dify_api_key: str = ""
+    dify_user: str = "soc-audit-local"
 
     # ── Paths ─────────────────────────────────────────────────────────────────
     root_dir: Path = Path(__file__).parent.parent
