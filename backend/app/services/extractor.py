@@ -189,6 +189,31 @@ def _format_pages(
     return "\n\n---\n\n".join(formatted_pages)
 
 
+def _detect_report_label(text: str) -> str:
+    cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+    latin_words = len(re.findall(r"\b[a-zA-Z]{3,}\b", text))
+    return "CN Report" if cjk_chars > latin_words * 0.35 else "EN Report"
+
+
+def _normalize_page_refs(page_refs: str, report_label: str) -> str:
+    if not page_refs.strip():
+        return ""
+
+    lines = [
+        line.strip()
+        for line in page_refs.replace("\r\n", "\n").split("\n")
+        if line.strip()
+    ]
+    lines = [
+        line
+        for line in lines
+        if not re.fullmatch(r"(CN|EN)\s+Report:?", line, flags=re.IGNORECASE)
+    ]
+    if not lines:
+        return ""
+    return f"{report_label}:\n" + "\n".join(lines)
+
+
 def _collect_candidate_pages(
     pages: dict[int, str],
     toc_range: list[int],
@@ -345,19 +370,23 @@ def _extract_sheet3(text: str) -> Sheet3Data:
     )
 
 
-def _extract_sheet6(cm: str, am: str, js: str) -> Sheet6Data:
+def _extract_sheet6(cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
     print(
         f"[EXTRACTOR] Sheet 6 input chars: cm={len(cm)}, am={len(am)}, js={len(js)}",
         flush=True,
     )
     raw = dify_client.call_json(
-        _prompt("sheet6_itgc.txt", cm_text=cm, am_text=am, js_text=js)
+        _prompt("sheet6_itgc.txt", report_label=report_label, cm_text=cm, am_text=am, js_text=js)
     )
-    return Sheet6Data(
+    data = Sheet6Data(
         change_mgmt=ITGCSection(**raw["change_mgmt"]),
         access_mgmt=ITGCSection(**raw["access_mgmt"]),
         job_scheduling=ITGCSection(**raw["job_scheduling"]),
     )
+    data.change_mgmt.page_refs = _normalize_page_refs(data.change_mgmt.page_refs, report_label)
+    data.access_mgmt.page_refs = _normalize_page_refs(data.access_mgmt.page_refs, report_label)
+    data.job_scheduling.page_refs = _normalize_page_refs(data.job_scheduling.page_refs, report_label)
+    return data
 
 
 def _extract_sheet7(text: str) -> Sheet7Data:
@@ -762,10 +791,12 @@ def extract(
         cm_text, am_text, js_text = _collect_sheet6_candidate_sections(
             pages, toc, report_to_pdf_page, pdf_to_report_page
         )
+        sheet6_report_label = _detect_report_label("\n\n".join([cm_text, am_text, js_text]))
         result.sheet6 = _extract_sheet6(
             cm_text,
             am_text,
             js_text,
+            sheet6_report_label,
         )
         logger.info("Sheet 6 done")
         _cb("Sheet 6 done", _STEP_PCT[6][1])

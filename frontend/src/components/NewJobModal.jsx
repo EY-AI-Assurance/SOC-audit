@@ -55,6 +55,7 @@ export default function NewJobModal({ onClose, onCreated }) {
     setSheets(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
 
   const allSheetsSelected = availableSheets.every(sheet => selectedSheets.includes(sheet))
+  const jobCount = selectedReports.length
 
   const handleUploadReport = async (e) => {
     const file = e.target.files?.[0]
@@ -107,8 +108,8 @@ export default function NewJobModal({ onClose, onCreated }) {
     setSubmitting(true)
     setError('')
     try {
-      await api.createJob(selectedTemplate, selectedReports, selectedSheets)
-      onCreated()
+      const res = await api.createJob(selectedTemplate, selectedReports, selectedSheets)
+      onCreated(res.jobs || [])
     } catch (e) {
       setError(e.message)
       setSubmitting(false)
@@ -216,7 +217,7 @@ export default function NewJobModal({ onClose, onCreated }) {
             disabled={submitting}
             className="px-5 py-2 bg-[#FFE600] text-[#2E2E38] text-sm font-semibold rounded-lg hover:bg-yellow-300 transition-colors disabled:opacity-50"
           >
-            {submitting ? 'Creating...' : 'Run Job →'}
+            {submitting ? 'Creating...' : `Run ${jobCount > 1 ? `${jobCount} Jobs` : 'Job'} →`}
           </button>
         </div>
 
