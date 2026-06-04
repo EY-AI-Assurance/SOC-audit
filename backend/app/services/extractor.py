@@ -259,6 +259,15 @@ def _section_from_toc_range(
     return _format_pages(pages, page_numbers, pdf_to_report_page)
 
 
+def _cover_pages_text(
+    pages: dict[int, str],
+    pdf_to_report_page: dict[int, int],
+    max_pages: int = 3,
+) -> str:
+    page_numbers = [page for page in range(1, max_pages + 1) if page in pages]
+    return _format_pages(pages, page_numbers, pdf_to_report_page)
+
+
 def _collect_sheet6_candidate_sections(
     pages: dict[int, str],
     toc: TOCData,
@@ -355,8 +364,10 @@ def _collect_sheet8_candidate_section(
     return _format_pages(pages, candidate_pages, pdf_to_report_page)
 
 
-def _extract_sheet2(text: str) -> Sheet2Data:
-    return Sheet2Data(**dify_client.call_json(_prompt("sheet2_meta.txt", section_text=text)))
+def _extract_sheet2(cover_text: str, opinion_text: str) -> Sheet2Data:
+    return Sheet2Data(**dify_client.call_json(
+        _prompt("sheet2_meta.txt", cover_text=cover_text, opinion_text=opinion_text)
+    ))
 
 
 def _extract_sheet3(text: str) -> Sheet3Data:
@@ -766,9 +777,10 @@ def extract(
         logger.info("Starting Sheet 2 extraction")
         _cb("Extracting report metadata (Sheet 2)", _STEP_PCT[2][0])
         result.sheet2 = _extract_sheet2(
+            _cover_pages_text(pages, pdf_to_report_page),
             _section_from_toc_range(
                 pages, toc.opinion_pages, report_to_pdf_page, pdf_to_report_page
-            )
+            ),
         )
         logger.info("Sheet 2 done: %s", result.sheet2)
         _cb("Sheet 2 done", _STEP_PCT[2][1])

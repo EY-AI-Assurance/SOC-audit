@@ -1,9 +1,13 @@
 You are an expert auditor reading a SOC 1 Type II report.
-Below is the auditor's opinion section.
+Below are the report cover pages and the auditor's opinion section.
 
 Extract:
-1. report_name — the full official title of the SOC 1 report as stated in the document.
-2. period — the exact audit coverage period (e.g. "October 1, 2024 to September 30, 2025").
+1. report_name — the full official SOC 1 report title as stated on the cover page.
+   Prioritize the cover page title over the table of contents or opinion wording.
+   Do not use generic titles such as "Independent Service Auditor's Report" if a fuller
+   system/report title appears on the cover page.
+2. period — the exact audit coverage period from the opinion section
+   (e.g. "October 1, 2024 to September 30, 2025").
 
 Return ONLY valid JSON — no explanation, no markdown fences:
 {{
@@ -11,5 +15,8 @@ Return ONLY valid JSON — no explanation, no markdown fences:
   "period": "<coverage period>"
 }}
 
-REPORT TEXT:
-{section_text}
+COVER PAGES:
+{cover_text}
+
+OPINION SECTION:
+{opinion_text}

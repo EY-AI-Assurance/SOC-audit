@@ -173,6 +173,9 @@ def _write_sheet9(ws, data: ExtractedFormData) -> None:
 
 _CONTROL_WORKSHEETS = {
     "xl/worksheets/sheet3.xml",
+    "xl/worksheets/sheet4.xml",
+    "xl/worksheets/sheet5.xml",
+    "xl/worksheets/sheet6.xml",
     "xl/worksheets/sheet7.xml",
     "xl/worksheets/sheet8.xml",
     "xl/worksheets/sheet9.xml",
