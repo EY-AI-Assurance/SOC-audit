@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
@@ -81,6 +82,12 @@ _SHEET8_RESPONSIBILITY_PHRASES = [
 
 _SHEET8_BULLET_PATTERN = r"\s*[•▪●◼■\uf06e]\s*"
 _SHEET8_CLEAN_CHUNK_SIZE = 12
+_SHEET8_STRUCTURAL_LABELS = {
+    "complementary user entity controls",
+    "control objective",
+    "related control objective",
+    "responsibilities of user entities",
+}
 
 
 def _prompt(name: str, **kwargs) -> str:
@@ -406,6 +413,55 @@ def _extract_sheet7(text: str) -> Sheet7Data:
     return Sheet7Data(has_subservice=raw["has_subservice"], organizations=orgs)
 
 
+def _is_sheet8_structural_noise(text: str) -> bool:
+    normalized = " ".join(text.split()).strip()
+    if not normalized:
+        return True
+    if not re.search(r"[A-Za-z\u4e00-\u9fff]", normalized):
+        return True
+
+    label = normalized.lower().strip(" .:;|-")
+    return label in _SHEET8_STRUCTURAL_LABELS
+
+
+def _dedupe_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
+    deduped: list[CUECItem] = []
+
+    for item in cuecs:
+        normalized_description = re.sub(
+            r"\s+",
+            " ",
+            item.description.lower(),
+        ).strip()
+        is_duplicate = False
+
+        for existing in deduped:
+            if existing.objective_and_page != item.objective_and_page:
+                continue
+
+            normalized_existing = re.sub(
+                r"\s+",
+                " ",
+                existing.description.lower(),
+            ).strip()
+            if min(len(normalized_existing), len(normalized_description)) < 80:
+                continue
+
+            similarity = SequenceMatcher(
+                None,
+                normalized_existing,
+                normalized_description,
+            ).ratio()
+            if similarity >= 0.95:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            deduped.append(item)
+
+    return deduped
+
+
 def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
     """
     Preserve cross-page CUEC table context for the LLM.
@@ -472,13 +528,6 @@ def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
 
         return logical_lines
 
-    def _looks_like_cuec_responsibility(text_part: str) -> bool:
-        lowered = text_part.lower()
-        lowered = re.sub(r"(?<=[a-z])\d+(?=[a-z])", "", lowered)
-        lowered = re.sub(r"\b\d+(?=[a-z])", "", lowered)
-        lowered = lowered.replace("entitie-s", "entities")
-        return any(phrase in lowered for phrase in _SHEET8_RESPONSIBILITY_PHRASES)
-
     def _add_cuec_items(page_number: int | None, objective: str, cuec_text: str) -> None:
         normalized_objective = " ".join(objective.split())
         normalized_text = " ".join(cuec_text.split())
@@ -504,7 +553,7 @@ def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
                 parts = parts[1:]
 
         for part in parts:
-            if _looks_like_cuec_responsibility(part):
+            if not _is_sheet8_structural_noise(part):
                 normalized_items.append((page_number, normalized_objective, part))
 
     for line in _logical_lines(text):
@@ -651,11 +700,13 @@ def _extract_sheet8(text: str) -> Sheet8Data:
     )
 
     if len(deterministic_cuecs) >= 2:
-        return Sheet8Data(cuecs=_clean_sheet8_cuecs(deterministic_cuecs))
+        cleaned_cuecs = _clean_sheet8_cuecs(deterministic_cuecs)
+        return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cleaned_cuecs))
 
     raw   = dify_client.call_json(_prompt("sheet8_cuec.txt", section_text=prepared_text))
     cuecs = [CUECItem(**c) for c in raw.get("cuecs", [])]
-    return Sheet8Data(cuecs=_clean_sheet8_cuecs(cuecs) if len(cuecs) >= 2 else cuecs)
+    cleaned_cuecs = _clean_sheet8_cuecs(cuecs) if len(cuecs) >= 2 else cuecs
+    return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cleaned_cuecs))
 
 
 def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
