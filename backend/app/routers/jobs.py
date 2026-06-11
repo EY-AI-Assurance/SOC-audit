@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.models.schemas import CreateJobRequest, CreatedJobsResponse, JobResponse, ReportSummary
-from app.routers.templates import get_template_path
+from app.routers.templates import get_template_meta, get_template_path
 from app.services.excel_writer import write_excel
 from app.services.extractor import extract
 from app.services.pdf_parser import parse_pdf, save_parsed
@@ -132,7 +132,18 @@ def list_jobs():
 
 @router.post("", response_model=CreatedJobsResponse, status_code=202)
 def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
-    template_path = get_template_path(req.template_id)  # validates template exists
+    template_meta = get_template_meta(req.template_id)
+    available_sheets = set(template_meta.get("available_sheets", []))
+    requested_sheets = set(req.sheets)
+
+    if not requested_sheets:
+        raise HTTPException(status_code=400, detail="Select at least one sheet")
+    if not requested_sheets <= available_sheets:
+        unsupported = sorted(requested_sheets - available_sheets)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Selected sheets are not available in this template: {unsupported}",
+        )
 
     jobs = []
     for rid in req.report_ids:
@@ -155,8 +166,8 @@ def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
         job_state = {
             "job_id": job_id,
             "template_id": req.template_id,
-            "template_name": template_path.name,
-            "sheets": req.sheets,
+            "template_name": template_meta["name"],
+            "sheets": sorted(requested_sheets),
             "status": "processing",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "reports": [report],

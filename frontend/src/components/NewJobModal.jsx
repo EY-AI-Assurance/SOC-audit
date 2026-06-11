@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 
-const DEFAULT_SHEETS = [2, 3, 6, 7, 8]
 const SHEET_LABELS = {
   2: 'Sheet 2 — Report Metadata',
   3: 'Sheet 3 — Opinion & Exceptions',
@@ -16,7 +15,7 @@ export default function NewJobModal({ onClose, onCreated }) {
   const [reports, setReports]           = useState([])
   const [selectedTemplate, setTemplate] = useState('')
   const [selectedReports, setReports_]  = useState([])
-  const [selectedSheets, setSheets]     = useState(DEFAULT_SHEETS)
+  const [selectedSheets, setSheets]     = useState([])
   const [uploading, setUploading]       = useState(false)
   const [submitting, setSubmitting]     = useState(false)
   const [error, setError]               = useState('')
@@ -31,22 +30,19 @@ export default function NewJobModal({ onClose, onCreated }) {
       if (t.templates?.length > 0) {
         const firstTemplate = t.templates[0]
         setTemplate(firstTemplate.template_id)
-        setSheets(firstTemplate.available_sheets?.length ? firstTemplate.available_sheets : DEFAULT_SHEETS)
+        setSheets(firstTemplate.available_sheets || [])
       }
     }).catch(e => setError(e.message))
   }, [])
 
   const selectedTemplateMeta = templates.find(t => t.template_id === selectedTemplate)
-  const availableSheets = selectedTemplateMeta?.available_sheets?.length
-    ? selectedTemplateMeta.available_sheets
-    : DEFAULT_SHEETS
+  const availableSheets = selectedTemplateMeta?.available_sheets || []
 
-  useEffect(() => {
-    setSheets(prev => {
-      const retained = prev.filter(sheet => availableSheets.includes(sheet))
-      return retained.length ? retained : availableSheets
-    })
-  }, [selectedTemplate])
+  const handleSelectTemplate = (templateId) => {
+    const template = templates.find(item => item.template_id === templateId)
+    setTemplate(templateId)
+    setSheets(template?.available_sheets || [])
+  }
 
   const toggleReport = (id) =>
     setReports_(prev => prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id])
@@ -54,7 +50,8 @@ export default function NewJobModal({ onClose, onCreated }) {
   const toggleSheet = (s) =>
     setSheets(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
 
-  const allSheetsSelected = availableSheets.every(sheet => selectedSheets.includes(sheet))
+  const allSheetsSelected = availableSheets.length > 0
+    && availableSheets.every(sheet => selectedSheets.includes(sheet))
   const jobCount = selectedReports.length
 
   const handleUploadReport = async (e) => {
@@ -95,7 +92,7 @@ export default function NewJobModal({ onClose, onCreated }) {
       const res = await api.uploadTemplate(file)
       setTemplates(prev => [...prev, res])
       setTemplate(res.template_id)
-      setSheets(res.available_sheets?.length ? res.available_sheets : DEFAULT_SHEETS)
+      setSheets(res.available_sheets || [])
     } catch (e) {
       setError(e.message)
     }
@@ -134,7 +131,7 @@ export default function NewJobModal({ onClose, onCreated }) {
             {templates.length > 0 ? (
               <select
                 value={selectedTemplate}
-                onChange={e => setTemplate(e.target.value)}
+                onChange={e => handleSelectTemplate(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE600]"
               >
                 {templates.map(t => (
@@ -203,6 +200,11 @@ export default function NewJobModal({ onClose, onCreated }) {
                   <span className="text-sm text-gray-700">{SHEET_LABELS[s]}</span>
                 </label>
               ))}
+              {selectedTemplate && availableSheets.length === 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
+                  This template does not contain any supported sheets. Supported sheets are 2, 3, 6, 7, 8, and 9.
+                </p>
+              )}
             </div>
           </div>
 
@@ -214,7 +216,7 @@ export default function NewJobModal({ onClose, onCreated }) {
           <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
           <button
             onClick={handleSubmit}
-            disabled={submitting}
+            disabled={submitting || !selectedTemplate || availableSheets.length === 0}
             className="px-5 py-2 bg-[#FFE600] text-[#2E2E38] text-sm font-semibold rounded-lg hover:bg-yellow-300 transition-colors disabled:opacity-50"
           >
             {submitting ? 'Creating...' : `Run ${jobCount > 1 ? `${jobCount} Jobs` : 'Job'} →`}

@@ -13,6 +13,8 @@ function formatDate(iso) {
 }
 
 function TemplateCard({ template, onDelete }) {
+  const availableSheets = template.available_sheets || []
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 flex flex-col gap-3 shadow-sm">
       <div className="flex items-start justify-between gap-4">
@@ -31,9 +33,20 @@ function TemplateCard({ template, onDelete }) {
       </div>
 
       <div className="flex items-center justify-between pt-1">
-        <span className="text-xs text-gray-400">
-          Available for new jobs.
-        </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          {availableSheets.length > 0 ? (
+            availableSheets.map(sheet => (
+              <span
+                key={sheet}
+                className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600"
+              >
+                Sheet {sheet}
+              </span>
+            ))
+          ) : (
+            <span className="text-xs text-amber-600">No supported sheets detected</span>
+          )}
+        </div>
         <button
           onClick={onDelete}
           className="text-gray-300 hover:text-red-400 transition-colors p-1"
@@ -63,7 +76,17 @@ export default function Templates() {
   }
 
   useEffect(() => {
-    load()
+    let cancelled = false
+    api.listTemplates()
+      .then(data => {
+        if (!cancelled) setTemplates(data.templates || [])
+      })
+      .catch(e => {
+        if (!cancelled) setError(e.message)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const handleUpload = async (event) => {
