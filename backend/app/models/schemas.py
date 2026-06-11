@@ -83,6 +83,10 @@ class JobResponse(BaseModel):
     reports: list[JobReportResult]
 
 
+class CreatedJobsResponse(BaseModel):
+    jobs: list[JobResponse]
+
+
 class CreateJobRequest(BaseModel):
     template_id: str
     report_ids: list[str]

@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
@@ -81,6 +82,12 @@ _SHEET8_RESPONSIBILITY_PHRASES = [
 
 _SHEET8_BULLET_PATTERN = r"\s*[•▪●◼■\uf06e]\s*"
 _SHEET8_CLEAN_CHUNK_SIZE = 12
+_SHEET8_STRUCTURAL_LABELS = {
+    "complementary user entity controls",
+    "control objective",
+    "related control objective",
+    "responsibilities of user entities",
+}
 
 
 def _prompt(name: str, **kwargs) -> str:
@@ -189,6 +196,31 @@ def _format_pages(
     return "\n\n---\n\n".join(formatted_pages)
 
 
+def _detect_report_label(text: str) -> str:
+    cjk_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
+    latin_words = len(re.findall(r"\b[a-zA-Z]{3,}\b", text))
+    return "CN Report" if cjk_chars > latin_words * 0.35 else "EN Report"
+
+
+def _normalize_page_refs(page_refs: str, report_label: str) -> str:
+    if not page_refs.strip():
+        return ""
+
+    lines = [
+        line.strip()
+        for line in page_refs.replace("\r\n", "\n").split("\n")
+        if line.strip()
+    ]
+    lines = [
+        line
+        for line in lines
+        if not re.fullmatch(r"(CN|EN)\s+Report:?", line, flags=re.IGNORECASE)
+    ]
+    if not lines:
+        return ""
+    return f"{report_label}:\n" + "\n".join(lines)
+
+
 def _collect_candidate_pages(
     pages: dict[int, str],
     toc_range: list[int],
@@ -231,6 +263,15 @@ def _section_from_toc_range(
     page_numbers = sorted(
         _pages_from_range(page_range, set(pages), report_to_pdf_page)
     )
+    return _format_pages(pages, page_numbers, pdf_to_report_page)
+
+
+def _cover_pages_text(
+    pages: dict[int, str],
+    pdf_to_report_page: dict[int, int],
+    max_pages: int = 3,
+) -> str:
+    page_numbers = [page for page in range(1, max_pages + 1) if page in pages]
     return _format_pages(pages, page_numbers, pdf_to_report_page)
 
 
@@ -330,8 +371,10 @@ def _collect_sheet8_candidate_section(
     return _format_pages(pages, candidate_pages, pdf_to_report_page)
 
 
-def _extract_sheet2(text: str) -> Sheet2Data:
-    return Sheet2Data(**dify_client.call_json(_prompt("sheet2_meta.txt", section_text=text)))
+def _extract_sheet2(cover_text: str, opinion_text: str) -> Sheet2Data:
+    return Sheet2Data(**dify_client.call_json(
+        _prompt("sheet2_meta.txt", cover_text=cover_text, opinion_text=opinion_text)
+    ))
 
 
 def _extract_sheet3(text: str) -> Sheet3Data:
@@ -345,25 +388,78 @@ def _extract_sheet3(text: str) -> Sheet3Data:
     )
 
 
-def _extract_sheet6(cm: str, am: str, js: str) -> Sheet6Data:
+def _extract_sheet6(cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
     print(
         f"[EXTRACTOR] Sheet 6 input chars: cm={len(cm)}, am={len(am)}, js={len(js)}",
         flush=True,
     )
     raw = dify_client.call_json(
-        _prompt("sheet6_itgc.txt", cm_text=cm, am_text=am, js_text=js)
+        _prompt("sheet6_itgc.txt", report_label=report_label, cm_text=cm, am_text=am, js_text=js)
     )
-    return Sheet6Data(
+    data = Sheet6Data(
         change_mgmt=ITGCSection(**raw["change_mgmt"]),
         access_mgmt=ITGCSection(**raw["access_mgmt"]),
         job_scheduling=ITGCSection(**raw["job_scheduling"]),
     )
+    data.change_mgmt.page_refs = _normalize_page_refs(data.change_mgmt.page_refs, report_label)
+    data.access_mgmt.page_refs = _normalize_page_refs(data.access_mgmt.page_refs, report_label)
+    data.job_scheduling.page_refs = _normalize_page_refs(data.job_scheduling.page_refs, report_label)
+    return data
 
 
 def _extract_sheet7(text: str) -> Sheet7Data:
     raw  = dify_client.call_json(_prompt("sheet7_subservice.txt", section_text=text))
     orgs = [SubserviceOrg(**o) for o in raw.get("organizations", [])]
     return Sheet7Data(has_subservice=raw["has_subservice"], organizations=orgs)
+
+
+def _is_sheet8_structural_noise(text: str) -> bool:
+    normalized = " ".join(text.split()).strip()
+    if not normalized:
+        return True
+    if not re.search(r"[A-Za-z\u4e00-\u9fff]", normalized):
+        return True
+
+    label = normalized.lower().strip(" .:;|-")
+    return label in _SHEET8_STRUCTURAL_LABELS
+
+
+def _dedupe_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
+    deduped: list[CUECItem] = []
+
+    for item in cuecs:
+        normalized_description = re.sub(
+            r"\s+",
+            " ",
+            item.description.lower(),
+        ).strip()
+        is_duplicate = False
+
+        for existing in deduped:
+            if existing.objective_and_page != item.objective_and_page:
+                continue
+
+            normalized_existing = re.sub(
+                r"\s+",
+                " ",
+                existing.description.lower(),
+            ).strip()
+            if min(len(normalized_existing), len(normalized_description)) < 80:
+                continue
+
+            similarity = SequenceMatcher(
+                None,
+                normalized_existing,
+                normalized_description,
+            ).ratio()
+            if similarity >= 0.95:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            deduped.append(item)
+
+    return deduped
 
 
 def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
@@ -432,13 +528,6 @@ def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
 
         return logical_lines
 
-    def _looks_like_cuec_responsibility(text_part: str) -> bool:
-        lowered = text_part.lower()
-        lowered = re.sub(r"(?<=[a-z])\d+(?=[a-z])", "", lowered)
-        lowered = re.sub(r"\b\d+(?=[a-z])", "", lowered)
-        lowered = lowered.replace("entitie-s", "entities")
-        return any(phrase in lowered for phrase in _SHEET8_RESPONSIBILITY_PHRASES)
-
     def _add_cuec_items(page_number: int | None, objective: str, cuec_text: str) -> None:
         normalized_objective = " ".join(objective.split())
         normalized_text = " ".join(cuec_text.split())
@@ -464,7 +553,7 @@ def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
                 parts = parts[1:]
 
         for part in parts:
-            if _looks_like_cuec_responsibility(part):
+            if not _is_sheet8_structural_noise(part):
                 normalized_items.append((page_number, normalized_objective, part))
 
     for line in _logical_lines(text):
@@ -611,11 +700,13 @@ def _extract_sheet8(text: str) -> Sheet8Data:
     )
 
     if len(deterministic_cuecs) >= 2:
-        return Sheet8Data(cuecs=_clean_sheet8_cuecs(deterministic_cuecs))
+        cleaned_cuecs = _clean_sheet8_cuecs(deterministic_cuecs)
+        return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cleaned_cuecs))
 
     raw   = dify_client.call_json(_prompt("sheet8_cuec.txt", section_text=prepared_text))
     cuecs = [CUECItem(**c) for c in raw.get("cuecs", [])]
-    return Sheet8Data(cuecs=_clean_sheet8_cuecs(cuecs) if len(cuecs) >= 2 else cuecs)
+    cleaned_cuecs = _clean_sheet8_cuecs(cuecs) if len(cuecs) >= 2 else cuecs
+    return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cleaned_cuecs))
 
 
 def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
@@ -737,9 +828,10 @@ def extract(
         logger.info("Starting Sheet 2 extraction")
         _cb("Extracting report metadata (Sheet 2)", _STEP_PCT[2][0])
         result.sheet2 = _extract_sheet2(
+            _cover_pages_text(pages, pdf_to_report_page),
             _section_from_toc_range(
                 pages, toc.opinion_pages, report_to_pdf_page, pdf_to_report_page
-            )
+            ),
         )
         logger.info("Sheet 2 done: %s", result.sheet2)
         _cb("Sheet 2 done", _STEP_PCT[2][1])
@@ -762,10 +854,12 @@ def extract(
         cm_text, am_text, js_text = _collect_sheet6_candidate_sections(
             pages, toc, report_to_pdf_page, pdf_to_report_page
         )
+        sheet6_report_label = _detect_report_label("\n\n".join([cm_text, am_text, js_text]))
         result.sheet6 = _extract_sheet6(
             cm_text,
             am_text,
             js_text,
+            sheet6_report_label,
         )
         logger.info("Sheet 6 done")
         _cb("Sheet 6 done", _STEP_PCT[6][1])

@@ -13,3 +13,4 @@ backend/storage/templates/
 __pycache__/
 *.pyc
 .env
+.env*

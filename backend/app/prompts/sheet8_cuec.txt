@@ -36,9 +36,12 @@ Important table handling rules:
   create a separate item for the continuation fragment.
 
 What counts as a CUEC:
+- Once a table column or section is confirmed as "Complementary User Entity
+  Controls", treat every separate non-header bullet or row in that column as a
+  CUEC. Do not require the sentence to start with "User entities".
 - A sentence or bullet that states what user entities, customers, clients, or
   customer administrators should do or are responsible for.
-- Common wording includes:
+- Common wording may include:
   "User entities should..."
   "User entities are responsible for..."
   "Customers are responsible for..."
@@ -47,6 +50,9 @@ What counts as a CUEC:
 - In row-based tables, each row whose left/right column contains one of the
   responsibility statements above counts as one CUEC even if there is no bullet
   symbol.
+- Wording such as "User identities are verified...", "The access key should...",
+  or OCR-corrupted variants still counts when it appears as a separate item in
+  the confirmed CUEC column.
 
 What does NOT count:
 - Service organization controls.

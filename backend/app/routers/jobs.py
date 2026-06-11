@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.models.schemas import CreateJobRequest, JobResponse, ReportSummary
+from app.models.schemas import CreateJobRequest, CreatedJobsResponse, JobResponse, ReportSummary
 from app.routers.templates import get_template_path
 from app.services.excel_writer import write_excel
 from app.services.extractor import extract
@@ -130,18 +130,19 @@ def list_jobs():
     return {"jobs": jobs}
 
 
-@router.post("", response_model=JobResponse, status_code=202)
+@router.post("", response_model=CreatedJobsResponse, status_code=202)
 def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
     template_path = get_template_path(req.template_id)  # validates template exists
 
-    # Load report filenames
-    reports = []
+    jobs = []
     for rid in req.report_ids:
         state_file = settings.parsed_dir / f"{rid}_state.json"
         if not state_file.exists():
             raise HTTPException(status_code=404, detail=f"Report {rid} not found")
         state = json.loads(state_file.read_text(encoding="utf-8"))
-        reports.append({
+
+        job_id = str(uuid.uuid4())
+        report = {
             "report_id": rid,
             "filename": state.get("filename", rid),
             "status": "QUEUED",
@@ -150,21 +151,21 @@ def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
             "output_filename": "",
             "summary": None,
             "error": "",
-        })
+        }
+        job_state = {
+            "job_id": job_id,
+            "template_id": req.template_id,
+            "template_name": template_path.name,
+            "sheets": req.sheets,
+            "status": "processing",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "reports": [report],
+        }
+        _write_job(job_id, job_state)
+        background_tasks.add_task(_bg_job, job_id)
+        jobs.append(JobResponse(**job_state))
 
-    job_id = str(uuid.uuid4())
-    state = {
-        "job_id": job_id,
-        "template_id": req.template_id,
-        "template_name": template_path.name,
-        "sheets": req.sheets,
-        "status": "processing",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "reports": reports,
-    }
-    _write_job(job_id, state)
-    background_tasks.add_task(_bg_job, job_id)
-    return JobResponse(**state)
+    return CreatedJobsResponse(jobs=jobs)
 
 
 @router.get("/{job_id}", response_model=JobResponse)

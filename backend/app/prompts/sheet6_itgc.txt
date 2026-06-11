@@ -30,8 +30,9 @@ IMPORTANT — Control ID formatting:
 - Preserve underscores and exact casing from the report.
 
 IMPORTANT — page_refs format:
-- Use newline-separated entries, starting with the language prefix, e.g.:
-  "EN Report:\nPage 33\nPage 40~42\nPage 95\nPage 113~118"
+- Use newline-separated entries, starting with this exact language prefix:
+  "{report_label}:"
+  e.g. "{report_label}:\nPage 33\nPage 40~42\nPage 95\nPage 113~118"
 - If an input page header contains both "PDF Page X" and "Report Page Y", use
   the Report Page number in page_refs.
 - Use "~" for page ranges (not "-").
@@ -164,14 +165,14 @@ Return ONLY valid JSON — no explanation, no markdown fences:
 {{
   "change_mgmt": {{
     "has_process_description": "Yes",
-    "page_refs": "EN Report:\nPage 33\nPage 40~42\nPage 95\nPage 113~118",
+    "page_refs": "{report_label}:\nPage 33\nPage 40~42\nPage 95\nPage 113~118",
     "section_b_applicable": "Not applicable",
     "section_c_applicable": "Applicable",
     "risk_control_ids": ["CCC_01\nCCC_03\nCCC_05\nCCC_07~09", "APD_11\nAPD_16\nCCC_04\nCCC_11"]
   }},
   "access_mgmt": {{
     "has_process_description": "Yes",
-    "page_refs": "EN Report:\nPage 31~34\nPage 39\nPage 78~103",
+    "page_refs": "{report_label}:\nPage 31~34\nPage 39\nPage 78~103",
     "section_b_applicable": "Not applicable",
     "section_c_applicable": "Applicable",
     "risk_control_ids": [
