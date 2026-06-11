@@ -41,7 +41,7 @@ What counts as a CUEC:
   CUEC. Do not require the sentence to start with "User entities".
 - A sentence or bullet that states what user entities, customers, clients, or
   customer administrators should do or are responsible for.
-- Common wording includes:
+- Common wording may include:
   "User entities should..."
   "User entities are responsible for..."
   "Customers are responsible for..."
