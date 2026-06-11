@@ -349,6 +349,7 @@ def _restore_excel_controls(
     tick_unqualified_opinion: bool,
     tick_no_test_exceptions: bool,
     tick_no_subservice: bool,
+    has_csocs: bool | None,
 ) -> None:
     with zipfile.ZipFile(template_path, "r") as zin:
         template_files = {name: zin.read(name) for name in zin.namelist()}
@@ -371,6 +372,19 @@ def _restore_excel_controls(
         # Sheet 7: no indexed subservice organizations
         "xl/ctrlProps/ctrlProp8.xml": tick_no_subservice,
     }
+    if has_csocs is not None:
+        checkbox_states.update({
+            # Sheet 9, first option: no CSOCs in the report
+            "xl/ctrlProps/ctrlProp11.xml": not has_csocs,
+            # Sheet 9, third option: CSOCs exist and the worksheet is completed
+            "xl/ctrlProps/ctrlProp12.xml": has_csocs,
+            # Sheet 9, second option is not selected by the automated workflow
+            "xl/ctrlProps/ctrlProp13.xml": False,
+            # Hidden English mirrors of the three Sheet 9 options
+            "xl/ctrlProps/ctrlProp14.xml": not has_csocs,
+            "xl/ctrlProps/ctrlProp15.xml": has_csocs,
+            "xl/ctrlProps/ctrlProp16.xml": False,
+        })
 
     for target, checked in checkbox_states.items():
         if target in files:
@@ -421,6 +435,7 @@ def write_excel(
             data.sheet3 and not data.sheet3.exceptions
         ),
         tick_no_subservice=bool(data.sheet7 and not data.sheet7.has_subservice),
+        has_csocs=bool(data.sheet9.csocs) if data.sheet9 is not None else None,
     )
 
     return output_path
