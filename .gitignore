@@ -15,3 +15,8 @@ __pycache__/
 *.pyc
 .env
 .env*
+!backend/.env.example
+
+# PyInstaller
+/build/
+/dist/
