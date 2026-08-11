@@ -8,6 +8,7 @@ export default function Jobs() {
   const [jobs, setJobs]             = useState([])
   const [showModal, setModal]       = useState(false)
   const [error, setError]           = useState('')
+  const [notice, setNotice]         = useState('')
   const [confirmId, setConfirmId]   = useState(null)
 
   const load = useCallback(async () => {
@@ -32,8 +33,31 @@ export default function Jobs() {
     return () => clearInterval(id)
   }, [jobs, load])
 
-  const handleDownload = (jobId, reportId) => {
-    window.location.href = api.downloadUrl(jobId, reportId)
+  const handleDownload = async (jobId, reportId) => {
+    setError('')
+    setNotice('')
+
+    try {
+      if (window.pywebview?.api?.save_output) {
+        const result = await window.pywebview.api.save_output(jobId, reportId)
+        if (result.status === 'saved') {
+          setNotice(`File saved to: ${result.path}`)
+        } else if (result.status === 'error') {
+          throw new Error(result.message || 'Could not save the file')
+        }
+        return
+      }
+
+      const link = document.createElement('a')
+      link.href = api.downloadUrl(jobId, reportId)
+      link.download = ''
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setNotice('Download started. Check your browser downloads.')
+    } catch (e) {
+      setError(e.message || 'Download failed')
+    }
   }
 
   const handleDeleteConfirmed = async () => {
@@ -61,6 +85,10 @@ export default function Jobs() {
 
       {error && (
         <p className="text-sm text-red-500 bg-red-50 rounded-lg px-4 py-3 mb-4">{error}</p>
+      )}
+
+      {notice && (
+        <p className="text-sm text-green-700 bg-green-50 rounded-lg px-4 py-3 mb-4">{notice}</p>
       )}
 
       {jobs.length === 0 ? (

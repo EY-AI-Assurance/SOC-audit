@@ -1,7 +1,9 @@
 """Desktop entry point for the packaged SOC Audit application."""
 from __future__ import annotations
 
+import json
 import logging
+import shutil
 import socket
 import sys
 import threading
@@ -24,6 +26,72 @@ from app.main import app
 
 
 HOST = "127.0.0.1"
+
+
+class DesktopApi:
+    """Native operations exposed to the React application by pywebview."""
+
+    def __init__(self) -> None:
+        self.window = None
+
+    def save_output(self, job_id: str, report_id: str) -> dict[str, str]:
+        """Show a native Save As dialog and copy a completed workbook there."""
+        try:
+            if self.window is None:
+                raise RuntimeError("The desktop window is not ready.")
+
+            job_path = (settings.jobs_dir / f"{job_id}.json").resolve()
+            jobs_root = settings.jobs_dir.resolve()
+            if not job_path.is_relative_to(jobs_root) or not job_path.is_file():
+                raise FileNotFoundError("Job not found.")
+
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+            report = next(
+                (item for item in job.get("reports", []) if item.get("report_id") == report_id),
+                None,
+            )
+            if report is None:
+                raise FileNotFoundError("Report not found in this job.")
+            if report.get("status") != "DONE":
+                raise RuntimeError("The output workbook is not ready yet.")
+
+            output_filename = report.get("output_filename", "")
+            output_path = (settings.outputs_dir / output_filename).resolve()
+            outputs_root = settings.outputs_dir.resolve()
+            if (
+                not output_filename
+                or not output_path.is_relative_to(outputs_root)
+                or not output_path.is_file()
+            ):
+                raise FileNotFoundError("The output workbook is missing.")
+
+            downloads_dir = Path.home() / "Downloads"
+            initial_dir = downloads_dir if downloads_dir.is_dir() else Path.home()
+            dialog_type = (
+                webview.FileDialog.SAVE
+                if hasattr(webview, "FileDialog")
+                else webview.SAVE_DIALOG
+            )
+            selected = self.window.create_file_dialog(
+                dialog_type,
+                directory=str(initial_dir),
+                save_filename=output_filename,
+                file_types=("Excel Workbook (*.xlsx)",),
+            )
+            if not selected:
+                return {"status": "cancelled"}
+
+            selected_path = selected[0] if isinstance(selected, (list, tuple)) else selected
+            destination = Path(selected_path)
+            if destination.suffix.lower() != ".xlsx":
+                destination = Path(f"{destination}.xlsx")
+
+            shutil.copy2(output_path, destination)
+            logging.info("Saved output workbook to %s", destination)
+            return {"status": "saved", "path": str(destination)}
+        except Exception as exc:
+            logging.exception("Could not save output workbook")
+            return {"status": "error", "message": str(exc)}
 
 
 def _find_available_port() -> int:
@@ -71,13 +139,19 @@ def main() -> None:
 
     try:
         _wait_for_server(url)
-        webview.create_window(
+        # Downloads are disabled by default in pywebview. Keep them enabled for
+        # browser-style fallback downloads in addition to the native Save As API.
+        webview.settings["ALLOW_DOWNLOADS"] = True
+        desktop_api = DesktopApi()
+        window = webview.create_window(
             "SOC Audit Automation",
             url,
+            js_api=desktop_api,
             width=1280,
             height=850,
             min_size=(1000, 650),
         )
+        desktop_api.window = window
         webview.start(storage_path=str(settings.root_dir / "webview"))
     finally:
         server.should_exit = True
