@@ -11,8 +11,8 @@ from app.models.schemas import (
     ApiConfigUpdate,
     DiscoverModelsRequest,
 )
-from app.services.api_config_store import PROVIDERS, api_config_store
-from app.services.dify_client import discover_models, test_connection
+from app.services.api_config_store import PROVIDERS, api_config_store, identify_provider
+from app.services.dify_client import detect_connection, discover_models, test_connection
 
 router = APIRouter(prefix="/api/api-configs", tags=["api-configs"])
 
@@ -66,23 +66,21 @@ def models(req: DiscoverModelsRequest):
     try:
         if req.config_id:
             config = api_config_store.get_secret(req.config_id)
+            protocol = config["protocol"]
+            provider_id = config["provider"]
+            model_list = discover_models(config)
         else:
-            if not req.provider or not req.api_key:
-                raise ValueError("Provider and API key are required")
-            provider = PROVIDERS.get(req.provider)
-            if not provider:
-                raise ValueError("Unsupported API provider")
-            base_url = (req.base_url or provider["base_url"]).strip().rstrip("/")
-            if not base_url:
-                raise ValueError("Base URL is required")
+            if not req.base_url or not req.api_key:
+                raise ValueError("Base URL and API key are required")
+            base_url = req.base_url.strip().rstrip("/")
             config = {
-                "provider": req.provider,
-                "protocol": provider["protocol"],
                 "base_url": base_url,
                 "api_key": req.api_key,
                 "verify_tls": req.verify_tls,
             }
-        return {"models": discover_models(config)}
+            protocol, model_list = detect_connection(config)
+            provider_id = identify_provider(base_url, protocol)
+        return {"models": model_list, "protocol": protocol, "provider": provider_id}
     except (KeyError, ValueError, RuntimeError) as exc:
         raise _http_error(exc, 502 if isinstance(exc, RuntimeError) else 400) from exc
 

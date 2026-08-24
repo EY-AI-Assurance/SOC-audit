@@ -88,6 +88,26 @@ PROVIDERS = {
 CONNECTION_FIELDS = {"provider", "base_url", "api_key", "model", "dify_user", "verify_tls"}
 
 
+def identify_provider(base_url: str, protocol: str) -> str:
+    """Infer a display preset without requiring the user to choose one."""
+    if protocol == "dify":
+        return "dify"
+    host = (urlparse(base_url).hostname or "").lower()
+    if "openrouter.ai" in host:
+        return "openrouter"
+    if any(value in host for value in ["dashscope", "aliyuncs.com", ".maas."]):
+        return "bailian"
+    if "deepseek" in host:
+        return "deepseek"
+    if "siliconflow" in host:
+        return "siliconflow"
+    if "moonshot" in host:
+        return "moonshot"
+    if host == "api.openai.com" or host.endswith(".openai.com"):
+        return "openai"
+    return "custom_openai_compatible"
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 

@@ -4,12 +4,36 @@ import ConfirmDialog from '../components/ConfirmDialog'
 
 const EMPTY_FORM = {
   name: '',
-  provider: 'openai',
-  base_url: 'https://api.openai.com/v1',
+  provider: '',
+  base_url: '',
   api_key: '',
   model: '',
   dify_user: 'soc-audit-local',
   verify_tls: true,
+}
+
+const PREFERRED_MODELS = {
+  openrouter: ['openrouter/free'],
+  bailian: ['qwen-plus', 'qwen-turbo'],
+  deepseek: ['deepseek-chat', 'deepseek-v4-flash'],
+  openai: ['gpt-4o-mini', 'gpt-4.1-mini'],
+}
+
+const NON_CHAT_MODEL_WORDS = [
+  'embedding', 'rerank', 'moderation', 'whisper', 'transcribe', 'tts',
+  'speech', 'image', 'dall-e', 'realtime',
+]
+
+function chooseAutomaticModel(provider, models) {
+  const preferred = PREFERRED_MODELS[provider] || []
+  for (const model of preferred) {
+    if (models.includes(model)) return model
+  }
+  if (provider === 'openrouter') {
+    const freeModel = models.find(model => model.endsWith(':free'))
+    if (freeModel) return freeModel
+  }
+  return models.find(model => !NON_CHAT_MODEL_WORDS.some(word => model.toLowerCase().includes(word))) || models[0] || ''
 }
 
 function formatDate(iso) {
@@ -71,67 +95,108 @@ function ConfigEditor({ providers, initial, onClose, onSaved }) {
     verify_tls: initial.verify_tls,
   } : EMPTY_FORM)
   const [models, setModels] = useState(initial?.model ? [initial.model] : [])
-  const [showAdvanced, setShowAdvanced] = useState(initial?.provider === 'custom_openai_compatible' || initial?.provider === 'bailian')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const selectedProvider = providers.find(item => item.id === form.provider)
-  const isDify = selectedProvider?.protocol === 'dify'
+  const isDify = form.provider === 'dify'
 
   const change = (key, value) => setForm(current => ({ ...current, [key]: value }))
 
-  const changeProvider = (providerId) => {
-    const provider = providers.find(item => item.id === providerId)
-    setForm(current => ({
-      ...current,
-      provider: providerId,
-      base_url: provider?.base_url || '',
-      model: '',
-      name: editing ? current.name : provider?.label || '',
-    }))
+  const changeBaseUrl = (baseUrl) => {
+    setForm(current => ({ ...current, base_url: baseUrl, provider: '', model: '' }))
     setModels([])
-    setShowAdvanced(providerId === 'custom_openai_compatible' || providerId === 'bailian')
   }
 
-  const discover = async () => {
-    if (isDify) return
+  const modelDiscoveryRequest = () => {
     if (!form.api_key && !editing) return setError('Enter an API key before loading models.')
     const unchangedConnection = editing
       && !form.api_key
-      && form.provider === initial.provider
       && form.base_url === initial.base_url
     if (editing && !form.api_key && !unchangedConnection) {
-      return setError('Enter the API key again to discover models after changing the provider or URL.')
+      throw new Error('Enter the API key again after changing the Base URL.')
     }
+    return unchangedConnection ? {
+      config_id: initial.id,
+    } : {
+      base_url: form.base_url,
+      api_key: form.api_key,
+      verify_tls: form.verify_tls,
+    }
+  }
+
+  const applyDiscovery = (result) => {
+    const providerId = result.provider || 'custom_openai_compatible'
+    const protocol = result.protocol || 'openai_compatible'
+    const availableModels = result.models || []
+    const selectedModel = protocol === 'dify'
+      ? ''
+      : form.model || chooseAutomaticModel(providerId, availableModels)
+    setModels(availableModels)
+    setForm(current => ({
+      ...current,
+      provider: providerId,
+      model: selectedModel,
+    }))
+    return { providerId, protocol, selectedModel }
+  }
+
+  const discover = async () => {
     setBusy('models')
     setError('')
     try {
-      const result = await api.discoverModels(unchangedConnection ? {
-        config_id: initial.id,
-      } : {
-        provider: form.provider,
-        base_url: form.base_url,
-        api_key: form.api_key,
-        verify_tls: form.verify_tls,
-      })
-      setModels(result.models || [])
-      if (!form.model && result.models?.length) change('model', result.models[0])
-      if (!result.models?.length) setError('No models were returned. Enter the model ID manually.')
+      const request = modelDiscoveryRequest()
+      if (!request) return ''
+      const result = await api.discoverModels(request)
+      const detected = applyDiscovery(result)
+      if (detected.protocol !== 'dify' && !detected.selectedModel) {
+        setShowAdvanced(true)
+        setError('No chat models were returned. Enter the model ID under Advanced settings.')
+      }
+      return detected
     } catch (e) {
-      setError(`${e.message} You can still enter the model ID manually.`)
+      setShowAdvanced(true)
+      setError(`${e.message} Enter the model ID under Advanced settings.`)
+      return ''
     } finally {
       setBusy('')
     }
   }
 
   const save = async (activate) => {
-    if (!form.name.trim()) return setError('Name is required.')
     if (!editing && !form.api_key.trim()) return setError('API key is required.')
     if (!form.base_url.trim()) return setError('Base URL is required.')
-    if (!isDify && !form.model.trim()) return setError('Select or enter a model.')
     setBusy(activate ? 'activate' : 'save')
     setError('')
     try {
-      const payload = { ...form }
+      let providerId = form.provider || initial?.provider || ''
+      let protocol = selectedProvider?.protocol || initial?.protocol || ''
+      let model = form.model.trim()
+      const shouldDetect = !editing
+        || Boolean(form.api_key.trim())
+        || form.base_url !== initial.base_url
+      if (shouldDetect) {
+        try {
+          const request = modelDiscoveryRequest()
+          const result = await api.discoverModels(request)
+          const detected = applyDiscovery(result)
+          providerId = detected.providerId
+          protocol = detected.protocol
+          model = detected.selectedModel
+        } catch (e) {
+          setShowAdvanced(true)
+          setError(e.message)
+          return
+        }
+      }
+      if (protocol !== 'dify' && !model) {
+        setShowAdvanced(true)
+        setError('This API did not return a model list. Enter the Model ID under Advanced settings.')
+        return
+      }
+      const provider = providers.find(item => item.id === providerId)
+      const name = form.name.trim() || provider?.label || 'API configuration'
+      const payload = { ...form, name, provider: providerId, model }
       if (editing && !payload.api_key) delete payload.api_key
       const saved = editing
         ? await api.updateApiConfig(initial.id, payload)
@@ -140,7 +205,9 @@ function ConfigEditor({ providers, initial, onClose, onSaved }) {
         await api.testApiConfig(saved.id)
         await api.activateApiConfig(saved.id)
       }
-      onSaved()
+      onSaved(activate
+        ? `${name} passed the connection test and is now active.`
+        : '')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -152,70 +219,63 @@ function ConfigEditor({ providers, initial, onClose, onSaved }) {
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full max-w-xl shadow-xl max-h-[92vh] flex flex-col">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <div><h2 className="font-bold text-lg text-[#2E2E38]">{editing ? 'Edit API' : 'Add API'}</h2><p className="text-xs text-gray-400 mt-0.5">Keys are encrypted and never shown again.</p></div>
+          <div><h2 className="font-bold text-lg text-[#2E2E38]">{editing ? 'Edit API' : 'Add API'}</h2><p className="text-xs text-gray-400 mt-0.5">Only Base URL and API key are required.</p></div>
           <button onClick={onClose} className="text-xl text-gray-400 hover:text-gray-600">×</button>
         </div>
         <div className="px-6 py-5 overflow-y-auto flex flex-col gap-4">
           <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-2">Provider</label>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {providers.map(provider => (
-                <button key={provider.id} onClick={() => changeProvider(provider.id)} className={`text-xs rounded-lg border px-2 py-2 text-left ${form.provider === provider.id ? 'border-[#FFE600] bg-yellow-50 font-semibold' : 'border-gray-200 hover:bg-gray-50'}`}>
-                  {provider.label}
-                </button>
-              ))}
-            </div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Base URL</label>
+            <input aria-label="Base URL" value={form.base_url} onChange={e => changeBaseUrl(e.target.value)} placeholder="https://your-api-host/compatible-mode/v1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
+            <p className="text-xs text-gray-400 mt-1">Paste the complete API address provided by your service.</p>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1">Configuration name</label>
-            <input value={form.name} onChange={e => change('name', e.target.value)} placeholder="e.g. Production Bailian" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
-          </div>
-          {(isDify || form.provider === 'custom_openai_compatible') && (
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Base URL</label>
-              <input value={form.base_url} onChange={e => change('base_url', e.target.value)} placeholder="https://…/v1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
-            </div>
-          )}
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">API key</label>
-            <input aria-label="API key" type="password" value={form.api_key} onChange={e => change('api_key', e.target.value)} onBlur={() => { if (form.api_key && !isDify && models.length === 0) discover() }} placeholder={editing ? 'Leave blank to keep the current key' : 'Paste API key'} autoComplete="new-password" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
+            <input aria-label="API key" type="password" value={form.api_key} onChange={e => change('api_key', e.target.value)} placeholder={editing ? 'Leave blank to keep the current key' : 'Paste API key'} autoComplete="new-password" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
           </div>
-          {!isDify && (
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-semibold text-gray-600">Default model</label>
-                <button onClick={discover} disabled={busy === 'models'} className="text-xs text-blue-500 hover:underline disabled:opacity-50">{busy === 'models' ? 'Loading…' : 'Load models'}</button>
+          {form.provider && (
+            <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
+              Detected automatically: {selectedProvider?.label || 'OpenAI-compatible API'}
+              {form.model ? ` · ${form.model}` : ''}
+            </p>
+          )}
+          {!form.provider && (
+            <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">Protocol, provider and model will be detected automatically.</p>
+          )}
+          <button onClick={() => setShowAdvanced(value => !value)} className="text-xs text-gray-500 text-left hover:text-gray-800">{showAdvanced ? '▾' : '▸'} Advanced settings (optional)</button>
+          {showAdvanced && (
+            <div className="flex flex-col gap-4 rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Configuration name <span className="font-normal text-gray-400">(optional)</span></label>
+                <input value={form.name} onChange={e => change('name', e.target.value)} placeholder={selectedProvider?.label || 'API configuration'} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
               </div>
-              {models.length > 0 ? (
-                <select value={form.model} onChange={e => change('model', e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE600]">
-                  {!models.includes(form.model) && form.model && <option value={form.model}>{form.model}</option>}
-                  {models.map(model => <option key={model} value={model}>{model}</option>)}
-                </select>
-              ) : (
-                <input value={form.model} onChange={e => change('model', e.target.value)} placeholder="Model ID" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
+              {!isDify && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-gray-600">Model <span className="font-normal text-gray-400">(automatic)</span></label>
+                    <button onClick={discover} disabled={Boolean(busy)} className="text-xs text-blue-500 hover:underline disabled:opacity-50">{busy === 'models' ? 'Loading…' : 'Load models'}</button>
+                  </div>
+                  {models.length > 0 ? (
+                    <select value={form.model} onChange={e => change('model', e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE600]">
+                      {!models.includes(form.model) && form.model && <option value={form.model}>{form.model}</option>}
+                      {models.map(model => <option key={model} value={model}>{model}</option>)}
+                    </select>
+                  ) : (
+                    <input value={form.model} onChange={e => change('model', e.target.value)} placeholder="Only needed if automatic selection fails" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
+                  )}
+                </div>
               )}
+              {isDify && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Dify user identifier <span className="font-normal text-gray-400">(optional)</span></label>
+                  <input value={form.dify_user} onChange={e => change('dify_user', e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
+                </div>
+              )}
+              <label className="flex items-start gap-2 text-xs text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={form.verify_tls} onChange={e => change('verify_tls', e.target.checked)} className="mt-0.5 accent-[#2E2E38]" />
+                <span><strong>Verify TLS certificates</strong><br /><span className="text-gray-400">Keep enabled unless an internal API uses a company certificate not trusted by this computer.</span></span>
+              </label>
             </div>
           )}
-          {isDify && (
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Dify user identifier</label>
-              <input value={form.dify_user} onChange={e => change('dify_user', e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE600]" />
-            </div>
-          )}
-          {!isDify && form.provider !== 'custom_openai_compatible' && (
-            <button onClick={() => setShowAdvanced(value => !value)} className="text-xs text-gray-500 text-left hover:text-gray-800">{showAdvanced ? '▾' : '▸'} Advanced settings</button>
-          )}
-          {showAdvanced && !isDify && form.provider !== 'custom_openai_compatible' && (
-            <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">Base URL</label>
-              <input value={form.base_url} onChange={e => change('base_url', e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" />
-              {form.provider === 'bailian' && <p className="text-xs text-gray-400 mt-1">Change this for another region, workspace, or an approved Bailian endpoint.</p>}
-            </div>
-          )}
-          <label className="flex items-start gap-2 text-xs text-gray-600 cursor-pointer">
-            <input type="checkbox" checked={form.verify_tls} onChange={e => change('verify_tls', e.target.checked)} className="mt-0.5 accent-[#2E2E38]" />
-            <span><strong>Verify TLS certificates</strong><br /><span className="text-gray-400">Keep enabled unless an internal API uses a company certificate not trusted by this computer.</span></span>
-          </label>
           {error && <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
@@ -239,6 +299,7 @@ export default function APIs() {
   const [confirmId, setConfirmId] = useState(null)
   const [busyId, setBusyId] = useState('')
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
 
   const providersById = useMemo(() => Object.fromEntries(providers.map(item => [item.id, item])), [providers])
 
@@ -262,22 +323,44 @@ export default function APIs() {
   const test = async (id) => {
     setBusyId(id)
     setError('')
-    try { await api.testApiConfig(id) } catch (e) { setError(e.message) } finally { setBusyId(''); await load() }
+    setSuccess('')
+    try {
+      await api.testApiConfig(id)
+      const config = configs.find(item => item.id === id)
+      setSuccess(`Connection test passed${config ? ` for ${config.name}` : ''}.`)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusyId('')
+      await load()
+    }
   }
 
   const activate = async (id) => {
     setBusyId(id)
     setError('')
-    try { await api.activateApiConfig(id); await load() } catch (e) { setError(e.message) } finally { setBusyId('') }
+    setSuccess('')
+    try {
+      await api.activateApiConfig(id)
+      const config = configs.find(item => item.id === id)
+      setSuccess(`${config?.name || 'API configuration'} is now active.`)
+      await load()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusyId('')
+    }
   }
 
   const remove = async () => {
     try { await api.deleteApiConfig(confirmId); await load() } catch (e) { setError(e.message) } finally { setConfirmId(null) }
   }
 
-  const saved = async () => {
+  const saved = async (message = '') => {
     setShowEditor(false)
     setEditor(null)
+    setError('')
+    setSuccess(message)
     await load()
   }
 
@@ -300,6 +383,12 @@ export default function APIs() {
       </div>
 
       {error && <p className="text-sm text-red-500 bg-red-50 rounded-lg px-4 py-3 mb-4">{error}</p>}
+      {success && (
+        <div role="status" className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-3 mb-4 flex items-center justify-between gap-4">
+          <span>✓ {success}</span>
+          <button onClick={() => setSuccess('')} aria-label="Dismiss success message" className="text-green-500 hover:text-green-800">×</button>
+        </div>
+      )}
 
       {configs.length === 0 ? (
         <div className="bg-white border border-dashed border-gray-300 rounded-2xl text-center py-16 px-6">

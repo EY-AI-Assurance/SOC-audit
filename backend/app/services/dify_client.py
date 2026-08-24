@@ -122,6 +122,39 @@ def discover_models(config: dict) -> list[str]:
     return sorted({item["id"] for item in data if isinstance(item, dict) and item.get("id")})
 
 
+def detect_connection(config: dict) -> tuple[str, list[str]]:
+    """Detect Dify vs. OpenAI-compatible from only a Base URL and API key."""
+    model_error: Exception | None = None
+    try:
+        return "openai_compatible", discover_models({**config, "protocol": "openai_compatible"})
+    except RuntimeError as exc:
+        model_error = exc
+
+    info_url = config["base_url"].rstrip("/") + "/info"
+    try:
+        with httpx.Client(timeout=30.0, verify=config.get("verify_tls", True)) as client:
+            response = client.get(
+                info_url,
+                headers={"Authorization": f"Bearer {config['api_key']}"},
+            )
+    except Exception as exc:
+        message = _safe_error(exc)
+        secret = config.get("api_key", "")
+        safe_message = message.replace(secret, "[REDACTED]") if secret else message
+        raise RuntimeError(safe_message) from exc
+
+    # Dify exposes /info. Authentication failures still identify the protocol;
+    # the subsequent connection test will return the useful credential error.
+    if response.status_code in {200, 401, 403}:
+        return "dify", []
+
+    # Some OpenAI-compatible services do not implement GET /models. Dify has
+    # now been ruled out, so retain the compatible protocol and let the user
+    # provide a model ID only if automatic discovery was unavailable.
+    logger.info("Model discovery unavailable; assuming OpenAI-compatible: %s", model_error)
+    return "openai_compatible", []
+
+
 def test_connection(config: dict) -> None:
     raw = LLMClient(config).call("Reply with exactly: OK")
     if not raw.strip():
