@@ -28,7 +28,7 @@ export default function NavBar() {
     <nav className="bg-white border-b border-gray-200">
       <div className="max-w-4xl mx-auto px-6 py-3 flex items-center gap-8">
         <span className="font-bold text-[#2E2E38] tracking-tight">
-          EY SOC Audit
+          SOC 107 Analyzer
         </span>
         <div className="flex gap-1">
           <NavLink to="/jobs" className={linkClass}>Jobs</NavLink>

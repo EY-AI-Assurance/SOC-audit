@@ -5,7 +5,7 @@ from app.config import settings
 from app.routers import api_configs, jobs, reports, templates
 
 app = FastAPI(
-    title="SOC Audit Automation",
+    title="SOC 107 Analyzer",
     description="Parse SOC 1 reports and auto-fill EY Form 107-A.",
     version="0.2.0",
     redirect_slashes=False,

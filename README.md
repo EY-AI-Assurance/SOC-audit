@@ -1,4 +1,4 @@
-# SOC Audit Form 107-A Automation
+# SOC 107 Analyzer
 
 FastAPI + React app for parsing SOC 1 reports and filling EY Form 107-A templates.
 

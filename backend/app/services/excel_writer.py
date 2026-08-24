@@ -39,6 +39,8 @@ _S6 = {
 }
 _COL_D = 4  # (X)  dropdown "See col (XI)" / "None"
 _COL_E = 5  # (XI) free-text reply / control IDs
+_JOB_SCHEDULING_NA_REASON = "不存在由服务机构控制及负责的计划任务。"
+_S6_DEFAULT_NA_CELLS = ("F6", "G6", "F19", "G19", "F34", "G34")
 
 
 # ── Sheet writers ─────────────────────────────────────────────────────────────
@@ -69,8 +71,9 @@ def _write_itgc_section(ws, section: ITGCSection, rows: dict) -> None:
         if not c.value:
             c.value = value
 
-    # Preserve all pre-filled template values; only fill blank cells
-    _set_if_empty(rows["has_desc"], _COL_E, section.has_process_description)
+    # A.1 is an extracted answer, so it must replace the template's default
+    # "Yes" when the report establishes that the process is not applicable.
+    _cell(ws, rows["has_desc"], _COL_E).value = section.has_process_description
     _set_if_empty(rows["sec_b"],    _COL_E, section.section_b_applicable)
     _set_if_empty(rows["sec_c"],    _COL_E, section.section_c_applicable)
 
@@ -92,6 +95,15 @@ def _write_sheet6(ws, data: ExtractedFormData) -> None:
     _write_itgc_section(ws, data.sheet6.change_mgmt,   _S6["change_mgmt"])
     _write_itgc_section(ws, data.sheet6.access_mgmt,   _S6["access_mgmt"])
     _write_itgc_section(ws, data.sheet6.job_scheduling, _S6["job_scheduling"])
+
+    if _cell(ws, _S6["job_scheduling"]["has_desc"], _COL_E).value == "Not applicable":
+        reason_cell = _cell(ws, 37, _COL_E)  # III.A.1.c explanation
+        if not reason_cell.value:
+            reason_cell.value = _JOB_SCHEDULING_NA_REASON
+
+    for coordinate in _S6_DEFAULT_NA_CELLS:
+        if not ws[coordinate].value:
+            ws[coordinate] = "N/A"
 
 
 def _write_sheet7(ws, data: ExtractedFormData) -> None:
