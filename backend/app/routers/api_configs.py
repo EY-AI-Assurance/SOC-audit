@@ -12,7 +12,13 @@ from app.models.schemas import (
     DiscoverModelsRequest,
 )
 from app.services.api_config_store import PROVIDERS, api_config_store, identify_provider
-from app.services.dify_client import detect_connection, discover_models, test_connection
+from app.services.dify_client import (
+    choose_automatic_model,
+    detect_connection,
+    discover_models,
+    log_connection_diagnostic,
+    test_connection,
+)
 
 router = APIRouter(prefix="/api/api-configs", tags=["api-configs"])
 
@@ -63,6 +69,7 @@ def delete_config(config_id: str):
 
 @router.post("/discover-models")
 def models(req: DiscoverModelsRequest):
+    config = None
     try:
         if req.config_id:
             config = api_config_store.get_secret(req.config_id)
@@ -81,20 +88,43 @@ def models(req: DiscoverModelsRequest):
             protocol, model_list = detect_connection(config)
             provider_id = identify_provider(base_url, protocol)
         return {"models": model_list, "protocol": protocol, "provider": provider_id}
-    except (KeyError, ValueError, RuntimeError) as exc:
-        raise _http_error(exc, 502 if isinstance(exc, RuntimeError) else 400) from exc
+    except RuntimeError as exc:
+        diagnostic_id = log_connection_diagnostic("discover_models", exc, config)
+        raise _http_error(
+            RuntimeError(f"{exc} Diagnostic ID: {diagnostic_id}"),
+            502,
+        ) from exc
+    except (KeyError, ValueError) as exc:
+        raise _http_error(exc, 400) from exc
 
 
 @router.post("/{config_id}/test", response_model=ApiConfigSummary)
 def test_config(config_id: str):
+    config = None
     try:
         config = api_config_store.get_secret(config_id)
+        if config["protocol"] == "auto":
+            protocol, models = detect_connection(config)
+            provider_id = identify_provider(config["base_url"], protocol)
+            model = "" if protocol == "dify" else (
+                config.get("model", "") or choose_automatic_model(provider_id, models)
+            )
+            if protocol != "dify" and not model:
+                raise ValueError(
+                    "The API did not return a model list. Enter a Model ID under Advanced settings, then test again."
+                )
+            api_config_store.update(config_id, {
+                "provider": provider_id,
+                "model": model,
+            })
+            config = api_config_store.get_secret(config_id)
         test_connection(config)
         return api_config_store.record_test(config_id, True)
     except KeyError as exc:
         raise _http_error(exc, 404) from exc
     except Exception as exc:
-        error = str(exc)[:500]
+        diagnostic_id = log_connection_diagnostic("test_connection", exc, config)
+        error = f"{str(exc)[:430]} Diagnostic ID: {diagnostic_id}"
         try:
             api_config_store.record_test(config_id, False, error)
         except KeyError:

@@ -3,13 +3,30 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import platform
 import re
+import sys
+import traceback
+import uuid
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
+
+PREFERRED_MODELS = {
+    "openrouter": ["openrouter/free"],
+    "bailian": ["qwen-plus", "qwen-turbo"],
+    "deepseek": ["deepseek-chat", "deepseek-v4-flash"],
+    "openai": ["gpt-4o-mini", "gpt-4.1-mini"],
+}
+NON_CHAT_MODEL_WORDS = {
+    "embedding", "rerank", "moderation", "whisper", "transcribe", "tts",
+    "speech", "image", "dall-e", "realtime",
+}
 
 
 def _safe_error(exc: Exception) -> str:
@@ -18,6 +35,89 @@ def _safe_error(exc: Exception) -> str:
     if isinstance(exc, httpx.ConnectError):
         return "Could not connect to the API. Check the URL, network, and VPN."
     return str(exc)[:500]
+
+
+def _redact(value: str, secret: str = "") -> str:
+    return value.replace(secret, "[REDACTED]") if secret else value
+
+
+def _safe_base_url(value: str) -> str:
+    """Remove URL credentials, query strings, and fragments before logging."""
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+    except (TypeError, ValueError):
+        return "[invalid URL]"
+
+
+def log_connection_diagnostic(operation: str, exc: Exception, config: dict | None = None) -> str:
+    """Log actionable connection details without exposing API credentials."""
+    config = config or {}
+    secret = str(config.get("api_key", ""))
+    diagnostic_id = uuid.uuid4().hex[:10]
+
+    exception_chain = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(exception_chain) < 8:
+        seen.add(id(current))
+        message = _redact(str(current), secret)[:1000]
+        exception_chain.append(
+            f"  {len(exception_chain) + 1}. {type(current).__module__}.{type(current).__name__}: {message}"
+        )
+        current = current.__cause__ or current.__context__
+
+    frames = traceback.extract_tb(exc.__traceback__)
+    traceback_lines = [
+        f"  {frame.filename}:{frame.lineno} in {frame.name}"
+        for frame in frames[-12:]
+    ] or ["  [no traceback frames]"]
+    proxy_state = ", ".join(
+        f"{name}={'SET' if os.environ.get(name) else 'not set'}"
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
+    )
+
+    logger.error(
+        "API_CONNECTION_DIAGNOSTIC id=%s\n"
+        "  operation=%s\n"
+        "  base_url=%s\n"
+        "  verify_tls=%s\n"
+        "  runtime=%s | Python %s | httpx %s\n"
+        "  proxy_environment=%s\n"
+        "exception_chain:\n%s\n"
+        "traceback_frames:\n%s",
+        diagnostic_id,
+        operation,
+        _safe_base_url(str(config.get("base_url", ""))),
+        config.get("verify_tls", True),
+        platform.platform(),
+        sys.version.split()[0],
+        httpx.__version__,
+        proxy_state,
+        "\n".join(exception_chain),
+        "\n".join(traceback_lines),
+    )
+    return diagnostic_id
+
+
+def choose_automatic_model(provider: str, models: list[str]) -> str:
+    for preferred in PREFERRED_MODELS.get(provider, []):
+        if preferred in models:
+            return preferred
+    if provider == "openrouter":
+        free_model = next((model for model in models if model.endswith(":free")), "")
+        if free_model:
+            return free_model
+    return next(
+        (
+            model for model in models
+            if not any(word in model.lower() for word in NON_CHAT_MODEL_WORDS)
+        ),
+        models[0] if models else "",
+    )
 
 
 class LLMClient:

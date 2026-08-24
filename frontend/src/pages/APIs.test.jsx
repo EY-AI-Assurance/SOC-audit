@@ -12,6 +12,7 @@ vi.mock('../api', () => ({
     testApiConfig: vi.fn(),
     discoverModels: vi.fn(),
     createApiConfig: vi.fn(),
+    updateApiConfig: vi.fn(),
     activateApiConfig: vi.fn(),
   },
 }))
@@ -90,6 +91,33 @@ describe('API Library', () => {
     })
     expect(await screen.findByRole('status')).toHaveTextContent(
       'Alibaba Bailian passed the connection test and is now active.'
+    )
+  })
+
+  it('saves a new API without making any external connection request', async () => {
+    api.createApiConfig.mockImplementation(async config => ({ id: 'config-1', ...config }))
+
+    render(<MemoryRouter><APIs /></MemoryRouter>)
+    await screen.findByText('API Library')
+    fireEvent.click(screen.getByRole('button', { name: '+ Add API' }))
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' },
+    })
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'sk-offline-test' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save without activating' }))
+
+    await waitFor(() => expect(api.createApiConfig).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'API configuration',
+      provider: 'auto',
+      base_url: 'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+      api_key: 'sk-offline-test',
+      model: '',
+    })))
+    expect(api.discoverModels).not.toHaveBeenCalled()
+    expect(api.testApiConfig).not.toHaveBeenCalled()
+    expect(api.activateApiConfig).not.toHaveBeenCalled()
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'API configuration was saved without testing the connection.'
     )
   })
 

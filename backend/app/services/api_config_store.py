@@ -27,6 +27,13 @@ except ImportError:  # pragma: no cover - exercised on POSIX
 
 
 PROVIDERS = {
+    "auto": {
+        "label": "Automatic detection",
+        "protocol": "auto",
+        "base_url": "",
+        "requires_base_url": True,
+        "supports_model_discovery": True,
+    },
     "dify": {
         "label": "Dify",
         "protocol": "dify",

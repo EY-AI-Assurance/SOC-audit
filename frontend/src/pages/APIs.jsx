@@ -169,6 +169,20 @@ function ConfigEditor({ providers, initial, onClose, onSaved }) {
     setBusy(activate ? 'activate' : 'save')
     setError('')
     try {
+      if (!activate) {
+        const providerId = form.provider || initial?.provider || 'auto'
+        const name = form.name.trim() || initial?.name || 'API configuration'
+        const payload = { ...form, name, provider: providerId, model: form.model.trim() }
+        if (editing && !payload.api_key) delete payload.api_key
+        if (editing) {
+          await api.updateApiConfig(initial.id, payload)
+        } else {
+          await api.createApiConfig(payload)
+        }
+        onSaved(`${name} was saved without testing the connection.`)
+        return
+      }
+
       let providerId = form.provider || initial?.provider || ''
       let protocol = selectedProvider?.protocol || initial?.protocol || ''
       let model = form.model.trim()
@@ -201,13 +215,9 @@ function ConfigEditor({ providers, initial, onClose, onSaved }) {
       const saved = editing
         ? await api.updateApiConfig(initial.id, payload)
         : await api.createApiConfig(payload)
-      if (activate) {
-        await api.testApiConfig(saved.id)
-        await api.activateApiConfig(saved.id)
-      }
-      onSaved(activate
-        ? `${name} passed the connection test and is now active.`
-        : '')
+      await api.testApiConfig(saved.id)
+      await api.activateApiConfig(saved.id)
+      onSaved(`${name} passed the connection test and is now active.`)
     } catch (e) {
       setError(e.message)
     } finally {
