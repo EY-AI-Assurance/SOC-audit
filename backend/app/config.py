@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     prompts_dir: Path = Path(__file__).parent / "prompts"
     jobs_dir: Path = storage_dir / "jobs"
     templates_dir: Path = storage_dir / "templates"
+    api_configs_dir: Path = storage_dir / "api_configs"
 
     # ── PDF parsing ───────────────────────────────────────────────────────────
     toc_max_pages: int = 6  # pages to scan for the table of contents
@@ -43,5 +44,5 @@ settings = Settings()
 
 # Ensure storage directories exist at startup
 for _d in [settings.uploads_dir, settings.parsed_dir, settings.outputs_dir,
-           settings.jobs_dir, settings.templates_dir]:
+           settings.jobs_dir, settings.templates_dir, settings.api_configs_dir]:
     _d.mkdir(parents=True, exist_ok=True)

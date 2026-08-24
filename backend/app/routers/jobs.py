@@ -14,6 +14,8 @@ from app.models.schemas import CreateJobRequest, CreatedJobsResponse, JobRespons
 from app.routers.templates import get_template_path
 from app.services.excel_writer import write_excel
 from app.services.extractor import extract
+from app.services.api_config_store import api_config_store
+from app.services.dify_client import LLMClient
 from app.services.pdf_parser import parse_pdf, save_parsed
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -54,9 +56,10 @@ def _finalize_job(job_id: str) -> None:
 
 # ── Background task ───────────────────────────────────────────────────────────
 
-def _bg_job(job_id: str) -> None:
+def _bg_job(job_id: str, api_snapshot: dict) -> None:
     state = _read_job(job_id)
     template_path = get_template_path(state["template_id"])
+    llm_client = LLMClient(api_snapshot)
 
     for report_entry in state["reports"]:
         report_id = report_entry["report_id"]
@@ -78,7 +81,12 @@ def _bg_job(job_id: str) -> None:
                                       status="PROCESSING", progress=pct,
                                       current_step=step)
 
-            form_data = extract(parsed_path, sheets=state["sheets"], progress_cb=_cb)
+            form_data = extract(
+                parsed_path,
+                llm_client=llm_client,
+                sheets=state["sheets"],
+                progress_cb=_cb,
+            )
 
             _update_report_in_job(job_id, report_id,
                                   status="PROCESSING", progress=95,
@@ -133,6 +141,17 @@ def list_jobs():
 @router.post("", response_model=CreatedJobsResponse, status_code=202)
 def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
     template_path = get_template_path(req.template_id)  # validates template exists
+    try:
+        api_snapshot = api_config_store.active_snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    public_api_snapshot = {
+        "id": api_snapshot["id"],
+        "name": api_snapshot["name"],
+        "provider": api_snapshot["provider"],
+        "model": api_snapshot.get("model", ""),
+    }
 
     jobs = []
     for rid in req.report_ids:
@@ -159,10 +178,11 @@ def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
             "sheets": req.sheets,
             "status": "processing",
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "api_config": public_api_snapshot,
             "reports": [report],
         }
         _write_job(job_id, job_state)
-        background_tasks.add_task(_bg_job, job_id)
+        background_tasks.add_task(_bg_job, job_id, dict(api_snapshot))
         jobs.append(JobResponse(**job_state))
 
     return CreatedJobsResponse(jobs=jobs)

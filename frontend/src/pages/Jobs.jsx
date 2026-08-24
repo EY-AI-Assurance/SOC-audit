@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
 import JobCard from '../components/JobCard'
@@ -10,18 +10,19 @@ export default function Jobs() {
   const [error, setError]           = useState('')
   const [confirmId, setConfirmId]   = useState(null)
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const data = await api.listJobs()
       setJobs(data.jobs || [])
     } catch (e) {
       setError(e.message)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    load()
-  }, [])
+    const timer = window.setTimeout(load, 0)
+    return () => window.clearTimeout(timer)
+  }, [load])
 
   // Poll every 3 s while any job is processing
   useEffect(() => {
@@ -29,7 +30,7 @@ export default function Jobs() {
     if (!hasActive) return
     const id = setInterval(load, 3000)
     return () => clearInterval(id)
-  }, [jobs])
+  }, [jobs, load])
 
   const handleDownload = (jobId, reportId) => {
     window.location.href = api.downloadUrl(jobId, reportId)

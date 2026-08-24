@@ -1,4 +1,6 @@
-"""LLM client for OpenAI-compatible providers and Dify Chatflow."""
+"""LLM clients for immutable API configuration snapshots."""
+from __future__ import annotations
+
 import json
 import logging
 import re
@@ -7,19 +9,24 @@ from typing import Any
 import httpx
 from openai import OpenAI
 
-from app.config import settings
-
 logger = logging.getLogger(__name__)
 
 
+def _safe_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "The API request timed out"
+    if isinstance(exc, httpx.ConnectError):
+        return "Could not connect to the API. Check the URL, network, and VPN."
+    return str(exc)[:500]
+
+
 class LLMClient:
-    def __init__(self) -> None:
+    def __init__(self, config: dict) -> None:
+        self.config = dict(config)
         self._client: OpenAI | None = None
-        self._model = settings.bailian_model
 
     def call(self, prompt: str, system_prompt: str = "") -> str:
-        """Send a prompt and return the raw response text."""
-        if settings.llm_provider == "dify":
+        if self.config["protocol"] == "dify":
             return self._call_dify(prompt)
 
         messages = []
@@ -27,89 +34,95 @@ class LLMClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = self._openai_client().chat.completions.create(
-            model=self._model,
-            messages=messages,
-        )
+        try:
+            response = self._openai_client().chat.completions.create(
+                model=self.config["model"],
+                messages=messages,
+            )
+        except Exception as exc:
+            raise RuntimeError(self._redact(_safe_error(exc))) from exc
         raw = response.choices[0].message.content or ""
-        print(f"[LLM] raw response (first 500 chars): {raw[:500]}", flush=True)
+        logger.info("LLM returned %d characters", len(raw))
         return raw
 
     def _openai_client(self) -> OpenAI:
-        if self._client is not None:
-            return self._client
-
-        if not settings.bailian_api_key:
-            raise ValueError("BAILIAN_API_KEY is empty. Set it in backend/.env before using LLM_PROVIDER=openai_compatible.")
-
-        self._client = OpenAI(
-            api_key=settings.bailian_api_key,
-            base_url=settings.bailian_base_url,
-            http_client=httpx.Client(verify=False, timeout=120.0),
-        )
+        if self._client is None:
+            self._client = OpenAI(
+                api_key=self.config["api_key"],
+                base_url=self.config["base_url"],
+                http_client=httpx.Client(
+                    verify=self.config.get("verify_tls", True),
+                    timeout=120.0,
+                ),
+            )
         return self._client
 
     def _call_dify(self, prompt: str) -> str:
-        if not settings.dify_base_url:
-            raise ValueError("DIFY_BASE_URL is empty. Set it in backend/.env before using LLM_PROVIDER=dify.")
-        if not settings.dify_api_key:
-            raise ValueError("DIFY_API_KEY is empty. Set it in backend/.env before using LLM_PROVIDER=dify.")
-
-        url = settings.dify_base_url.rstrip("/") + "/chat-messages"
-
+        url = self.config["base_url"].rstrip("/") + "/chat-messages"
         headers = {
-            "Authorization": f"Bearer {settings.dify_api_key}",
+            "Authorization": f"Bearer {self.config['api_key']}",
             "Content-Type": "application/json",
         }
-
         payload = {
             "inputs": {},
             "query": prompt,
             "response_mode": "blocking",
             "conversation_id": "",
-            "user": settings.dify_user,
+            "user": self.config.get("dify_user") or "soc-audit-local",
         }
-
         try:
-            with httpx.Client(timeout=180.0) as client:
+            with httpx.Client(
+                timeout=180.0,
+                verify=self.config.get("verify_tls", True),
+            ) as client:
                 response = client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
-        except httpx.ConnectError as exc:
-            raise ConnectionError(
-                f"Cannot connect to Dify API at {url}. "
-                "Check whether you are connected to the company network/VPN and whether DIFY_BASE_URL is correct."
-            ) from exc
         except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
-                f"Dify API returned HTTP {exc.response.status_code}: {exc.response.text[:500]}"
-            ) from exc
+            raise RuntimeError(f"Dify returned HTTP {exc.response.status_code}") from exc
+        except Exception as exc:
+            raise RuntimeError(self._redact(_safe_error(exc))) from exc
 
-        data = response.json()
-        raw = data.get("answer", "")
-        print(f"[DIFY] raw response (first 500 chars): {raw[:500]}", flush=True)
+        raw = response.json().get("answer", "")
+        logger.info("Dify returned %d characters", len(raw))
         return raw
 
+    def _redact(self, value: str) -> str:
+        secret = self.config.get("api_key", "")
+        return value.replace(secret, "[REDACTED]") if secret else value
+
     def call_json(self, prompt: str, system_prompt: str = "") -> Any:
-        """Call the LLM and parse the response as JSON.
-        Strips Qwen3 thinking tags and markdown code fences before parsing."""
         raw = self.call(prompt, system_prompt).strip()
         if not raw:
-            raise ValueError("LLM returned an empty response. The prompt may be too long or the API request failed without content.")
-
-        # Strip Qwen3 thinking blocks: <think>...</think>
+            raise ValueError("LLM returned an empty response")
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-
-        # Strip markdown code fences
         if raw.startswith("```"):
             raw = "\n".join(raw.splitlines()[1:]).rstrip("`").strip()
-
-        print(f"[LLM] cleaned JSON (first 500 chars): {raw[:500]}", flush=True)
-
         try:
             return json.loads(raw)
-        except json.JSONDecodeError:
-            print(f"[LLM] JSON parse FAILED. Full response:\n{raw}", flush=True)
-            raise
+        except json.JSONDecodeError as exc:
+            logger.error("LLM response was not valid JSON (%d characters)", len(raw))
+            raise ValueError("LLM response was not valid JSON") from exc
 
 
-dify_client = LLMClient()
+def discover_models(config: dict) -> list[str]:
+    if config.get("protocol") == "dify":
+        return []
+    url = config["base_url"].rstrip("/") + "/models"
+    try:
+        with httpx.Client(timeout=30.0, verify=config.get("verify_tls", True)) as client:
+            response = client.get(url, headers={"Authorization": f"Bearer {config['api_key']}"})
+            response.raise_for_status()
+            data = response.json().get("data", [])
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"Model discovery returned HTTP {exc.response.status_code}") from exc
+    except Exception as exc:
+        message = _safe_error(exc)
+        secret = config.get("api_key", "")
+        raise RuntimeError(message.replace(secret, "[REDACTED]") if secret else message) from exc
+    return sorted({item["id"] for item in data if isinstance(item, dict) and item.get("id")})
+
+
+def test_connection(config: dict) -> None:
+    raw = LLMClient(config).call("Reply with exactly: OK")
+    if not raw.strip():
+        raise ValueError("The API returned an empty response")

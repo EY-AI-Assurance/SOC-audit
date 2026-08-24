@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import ConfirmDialog from '../components/ConfirmDialog'
 
@@ -53,18 +53,19 @@ export default function Templates() {
   const [confirmId, setConfirmId] = useState(null)
   const inputRef = useRef()
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const data = await api.listTemplates()
       setTemplates(data.templates || [])
     } catch (e) {
       setError(e.message)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    load()
-  }, [])
+    const timer = window.setTimeout(load, 0)
+    return () => window.clearTimeout(timer)
+  }, [load])
 
   const handleUpload = async (event) => {
     const files = Array.from(event.target.files || [])

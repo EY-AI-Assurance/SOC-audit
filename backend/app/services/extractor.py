@@ -14,7 +14,7 @@ from app.models.extraction import (
     Sheet2Data, Sheet3Data, Sheet6Data, Sheet7Data, Sheet8Data, Sheet9Data,
     SubserviceOrg, TOCData,
 )
-from app.services.dify_client import dify_client
+from app.services.dify_client import LLMClient
 from app.services.pdf_parser import load_parsed
 
 
@@ -94,13 +94,13 @@ def _prompt(name: str, **kwargs) -> str:
     return (settings.prompts_dir / name).read_text(encoding="utf-8").format(**kwargs)
 
 
-def _parse_toc(pages: dict[int, str]) -> TOCData:
+def _parse_toc(llm_client: LLMClient, pages: dict[int, str]) -> TOCData:
     toc_text = "\n\n".join(
         f"[Page {p}]\n{pages[p]}"
         for p in range(1, settings.toc_max_pages + 1)
         if p in pages
     )
-    return TOCData(**dify_client.call_json(_prompt("toc.txt", toc_text=toc_text)))
+    return TOCData(**llm_client.call_json(_prompt("toc.txt", toc_text=toc_text)))
 
 
 def _detect_report_page_number(text: str) -> int | None:
@@ -371,14 +371,14 @@ def _collect_sheet8_candidate_section(
     return _format_pages(pages, candidate_pages, pdf_to_report_page)
 
 
-def _extract_sheet2(cover_text: str, opinion_text: str) -> Sheet2Data:
-    return Sheet2Data(**dify_client.call_json(
+def _extract_sheet2(llm_client: LLMClient, cover_text: str, opinion_text: str) -> Sheet2Data:
+    return Sheet2Data(**llm_client.call_json(
         _prompt("sheet2_meta.txt", cover_text=cover_text, opinion_text=opinion_text)
     ))
 
 
-def _extract_sheet3(text: str) -> Sheet3Data:
-    raw = dify_client.call_json(_prompt("sheet3_opinion.txt", section_text=text))
+def _extract_sheet3(llm_client: LLMClient, text: str) -> Sheet3Data:
+    raw = llm_client.call_json(_prompt("sheet3_opinion.txt", section_text=text))
     opinion    = QualifiedOpinion(**raw["opinion"]) if raw.get("opinion") else None
     exceptions = [ExceptionItem(**e) for e in raw.get("exceptions", [])]
     return Sheet3Data(
@@ -388,12 +388,12 @@ def _extract_sheet3(text: str) -> Sheet3Data:
     )
 
 
-def _extract_sheet6(cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
+def _extract_sheet6(llm_client: LLMClient, cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
     print(
         f"[EXTRACTOR] Sheet 6 input chars: cm={len(cm)}, am={len(am)}, js={len(js)}",
         flush=True,
     )
-    raw = dify_client.call_json(
+    raw = llm_client.call_json(
         _prompt("sheet6_itgc.txt", report_label=report_label, cm_text=cm, am_text=am, js_text=js)
     )
     data = Sheet6Data(
@@ -407,8 +407,8 @@ def _extract_sheet6(cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
     return data
 
 
-def _extract_sheet7(text: str) -> Sheet7Data:
-    raw  = dify_client.call_json(_prompt("sheet7_subservice.txt", section_text=text))
+def _extract_sheet7(llm_client: LLMClient, text: str) -> Sheet7Data:
+    raw  = llm_client.call_json(_prompt("sheet7_subservice.txt", section_text=text))
     orgs = [SubserviceOrg(**o) for o in raw.get("organizations", [])]
     return Sheet7Data(has_subservice=raw["has_subservice"], organizations=orgs)
 
@@ -690,7 +690,7 @@ def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
     return prepared_text, deterministic_cuecs
 
 
-def _extract_sheet8(text: str) -> Sheet8Data:
+def _extract_sheet8(llm_client: LLMClient, text: str) -> Sheet8Data:
     prepared_text, deterministic_cuecs = _prepare_sheet8_text(text)
     print(
         "[EXTRACTOR] Sheet 8 input chars: "
@@ -700,16 +700,16 @@ def _extract_sheet8(text: str) -> Sheet8Data:
     )
 
     if len(deterministic_cuecs) >= 2:
-        cleaned_cuecs = _clean_sheet8_cuecs(deterministic_cuecs)
+        cleaned_cuecs = _clean_sheet8_cuecs(llm_client, deterministic_cuecs)
         return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cleaned_cuecs))
 
-    raw   = dify_client.call_json(_prompt("sheet8_cuec.txt", section_text=prepared_text))
+    raw   = llm_client.call_json(_prompt("sheet8_cuec.txt", section_text=prepared_text))
     cuecs = [CUECItem(**c) for c in raw.get("cuecs", [])]
-    cleaned_cuecs = _clean_sheet8_cuecs(cuecs) if len(cuecs) >= 2 else cuecs
+    cleaned_cuecs = _clean_sheet8_cuecs(llm_client, cuecs) if len(cuecs) >= 2 else cuecs
     return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cleaned_cuecs))
 
 
-def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
+def _clean_sheet8_cuecs(llm_client: LLMClient, cuecs: list[CUECItem]) -> list[CUECItem]:
     cleaned: list[CUECItem] = []
 
     for start in range(0, len(cuecs), _SHEET8_CLEAN_CHUNK_SIZE):
@@ -724,7 +724,7 @@ def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
         ]
 
         try:
-            raw = dify_client.call_json(
+            raw = llm_client.call_json(
                 _prompt(
                     "sheet8_clean_cuec.txt",
                     items_json=json.dumps(payload, ensure_ascii=False, indent=2),
@@ -776,8 +776,8 @@ def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
     return cleaned
 
 
-def _extract_sheet9(text: str) -> Sheet9Data:
-    raw = dify_client.call_json(_prompt("sheet9_csoc.txt", section_text=text))
+def _extract_sheet9(llm_client: LLMClient, text: str) -> Sheet9Data:
+    raw = llm_client.call_json(_prompt("sheet9_csoc.txt", section_text=text))
     raw_csocs = raw.get("csocs", []) if isinstance(raw, dict) else raw
     if not isinstance(raw_csocs, list):
         raise ValueError("Sheet 9 response must be a JSON object with 'csocs' or a JSON array")
@@ -799,6 +799,7 @@ _STEP_PCT = {
 
 def extract(
     parsed_path: Path,
+    llm_client: LLMClient,
     sheets: list[int] | None = None,
     progress_cb: Callable[[str, int], None] | None = None,
 ) -> ExtractedFormData:
@@ -813,7 +814,7 @@ def extract(
     report_to_pdf_page, pdf_to_report_page = _build_page_number_maps(pages)
 
     _cb("Locating sections (TOC)", _STEP_PCT["toc"][0])
-    toc = _parse_toc(pages)
+    toc = _parse_toc(llm_client, pages)
     print(f"[EXTRACTOR] TOC: system={toc.system_name}, opinion={toc.opinion_pages}, cm={toc.change_mgmt_pages}", flush=True)
     print(
         "[EXTRACTOR] Page map sample: "
@@ -828,6 +829,7 @@ def extract(
         logger.info("Starting Sheet 2 extraction")
         _cb("Extracting report metadata (Sheet 2)", _STEP_PCT[2][0])
         result.sheet2 = _extract_sheet2(
+            llm_client,
             _cover_pages_text(pages, pdf_to_report_page),
             _section_from_toc_range(
                 pages, toc.opinion_pages, report_to_pdf_page, pdf_to_report_page
@@ -840,6 +842,7 @@ def extract(
         logger.info("Starting Sheet 3 extraction")
         _cb("Extracting opinion & exceptions (Sheet 3)", _STEP_PCT[3][0])
         result.sheet3 = _extract_sheet3(
+            llm_client,
             _section_from_toc_range(
                 pages, toc.opinion_pages, report_to_pdf_page, pdf_to_report_page
             )
@@ -856,6 +859,7 @@ def extract(
         )
         sheet6_report_label = _detect_report_label("\n\n".join([cm_text, am_text, js_text]))
         result.sheet6 = _extract_sheet6(
+            llm_client,
             cm_text,
             am_text,
             js_text,
@@ -868,6 +872,7 @@ def extract(
         logger.info("Starting Sheet 7 extraction")
         _cb("Identifying subservice organizations (Sheet 7)", _STEP_PCT[7][0])
         result.sheet7 = _extract_sheet7(
+            llm_client,
             _section_from_toc_range(
                 pages, toc.subservice_pages, report_to_pdf_page, pdf_to_report_page
             )
@@ -879,6 +884,7 @@ def extract(
         logger.info("Starting Sheet 8 extraction")
         _cb("Extracting CUECs (Sheet 8)", _STEP_PCT[8][0])
         result.sheet8 = _extract_sheet8(
+            llm_client,
             _collect_sheet8_candidate_section(
                 pages, toc, report_to_pdf_page, pdf_to_report_page
             )
@@ -890,12 +896,14 @@ def extract(
         logger.info("Starting Sheet 9 extraction")
         _cb("Extracting CSOCs (Sheet 9)", _STEP_PCT[9][0])
         sheet7_for_dependency = result.sheet7 or _extract_sheet7(
+            llm_client,
             _section_from_toc_range(
                 pages, toc.subservice_pages, report_to_pdf_page, pdf_to_report_page
             )
         )
         if sheet7_for_dependency.has_subservice:
             result.sheet9 = _extract_sheet9(
+                llm_client,
                 _section_from_toc_range(
                     pages, toc.csoc_pages, report_to_pdf_page, pdf_to_report_page
                 )
