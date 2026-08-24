@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,21 @@ from app.services.dify_client import LLMClient
 from app.services.pdf_parser import parse_pdf, save_parsed
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+WINDOWS_RESERVED_FILENAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
+
+
+def _safe_filename_component(value: str, fallback: str) -> str:
+    """Return a filename component valid on Windows, macOS, and Linux."""
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value)
+    cleaned = re.sub(r"\s+", "_", cleaned).strip(" ._")
+    if not cleaned or cleaned.upper() in WINDOWS_RESERVED_FILENAMES:
+        cleaned = fallback
+    return cleaned[:80].rstrip(" .") or fallback
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -92,7 +108,7 @@ def _bg_job(job_id: str, api_snapshot: dict) -> None:
                                   status="PROCESSING", progress=95,
                                   current_step="Writing Excel")
 
-            safe = (form_data.system_name or report_id[:8]).replace("/", "_").replace(" ", "_")
+            safe = _safe_filename_component(form_data.system_name or "", report_id[:8])
             output_filename = f"Form_107-A_{safe}_{report_id[:8]}.xlsx"
             print(f"[JOB] Writing Excel to {output_filename}", flush=True)
             write_excel(form_data, settings.outputs_dir / output_filename,

@@ -10,9 +10,7 @@ FastAPI + React app for parsing SOC 1 reports and filling EY Form 107-A template
 
 ## 1. Clone / Open Project
 
-```bash
-cd /Users/yixuanma/Desktop/EY/SOC-audit
-```
+Open a terminal in the cloned `SOC-audit` project directory.
 
 ## 2. Backend Setup
 
@@ -30,6 +28,14 @@ pip install -r backend/requirements.txt
 ```
 
 Create backend environment file:
+
+Create an empty `backend/.env` file. On Windows PowerShell:
+
+```powershell
+New-Item backend/.env -ItemType File -Force
+```
+
+On macOS/Linux:
 
 ```bash
 touch backend/.env
@@ -50,6 +56,9 @@ Start backend from project root:
 python run.py
 ```
 
+The launcher resolves paths from `run.py`, so it also works when the project is
+stored in a Windows or OneDrive directory containing spaces.
+
 Backend runs at:
 
 ```text
@@ -64,7 +73,7 @@ http://127.0.0.1:8000/health
 
 ## 3. Frontend Setup
 
-Use Node.js `22.x`. If using `nvm`:
+Use Node.js `22.x`. If using `nvm` on macOS/Linux:
 
 ```bash
 nvm install 22
@@ -77,6 +86,10 @@ Install frontend dependencies:
 cd frontend
 npm install
 ```
+
+On Windows, install Node.js 22 and run the same `npm install` command from the
+`frontend` directory. Do not copy `node_modules` from macOS/Linux; npm installs
+the correct Windows-native optional packages automatically.
 
 Start frontend:
 
@@ -104,13 +117,11 @@ http://localhost:5173
 ## API Library
 
 - Supported protocols: Dify Chatflow and OpenAI-compatible Chat Completions.
-- Provider presets: OpenAI, Alibaba Bailian, DeepSeek, SiliconFlow, Moonshot,
-  OpenRouter, and custom OpenAI-compatible endpoints.
-- Most presets only require an API key. The app attempts to load accessible
-  models automatically; a model ID can be entered manually if discovery is not
-  supported by that endpoint.
-- Bailian endpoints vary by region and workspace. Change the default Base URL
-  under Advanced settings when required.
+- Base URL and API key are the only required user inputs. The app detects the
+  protocol/provider and attempts to select an accessible chat model automatically.
+- A model ID can be entered under Advanced settings if the endpoint does not
+  support model discovery. Always use the exact Base URL supplied by the API
+  service; Bailian endpoints can vary by region and workspace.
 - API keys are encrypted under `backend/storage/api_configs/` and are never
   returned to the browser. Back up `master.key` together with
   `api_configs.json`; neither file is useful on its own.
