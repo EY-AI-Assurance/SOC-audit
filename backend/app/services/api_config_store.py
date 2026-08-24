@@ -1,7 +1,6 @@
 """Encrypted, file-backed API configuration library."""
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import threading
@@ -15,6 +14,16 @@ from urllib.parse import urlparse
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.config import settings
+
+try:  # POSIX: macOS and Linux
+    import fcntl
+except ImportError:  # pragma: no cover - exercised on Windows
+    fcntl = None
+
+try:  # Windows
+    import msvcrt
+except ImportError:  # pragma: no cover - exercised on POSIX
+    msvcrt = None
 
 
 PROVIDERS = {
@@ -99,6 +108,35 @@ def _normalize_url(value: str) -> str:
     return value
 
 
+def _lock_file(handle) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return
+    if msvcrt is not None:
+        # msvcrt locks a byte range from the current file position. Keep one
+        # stable byte in the lock file so separate Windows processes contend
+        # for the same range.
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        return
+    raise RuntimeError("No supported file-locking implementation is available")
+
+
+def _unlock_file(handle) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+    if msvcrt is not None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    raise RuntimeError("No supported file-locking implementation is available")
+
+
 class ApiConfigStore:
     def __init__(self, directory: Path | None = None) -> None:
         self.directory = directory or settings.api_configs_dir
@@ -121,12 +159,12 @@ class ApiConfigStore:
     @contextmanager
     def _locked(self) -> Iterator[None]:
         with self._thread_lock:
-            with self.lock_path.open("a+") as handle:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            with self.lock_path.open("a+b") as handle:
+                _lock_file(handle)
                 try:
                     yield
                 finally:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    _unlock_file(handle)
 
     def _read_unlocked(self) -> dict:
         if not self.data_path.exists():

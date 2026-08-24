@@ -1,8 +1,10 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.services.api_config_store import ApiConfigStore
+from app.services import api_config_store as store_module
 
 
 @pytest.fixture()
@@ -69,3 +71,19 @@ def test_deleting_active_config_clears_selection(store: ApiConfigStore):
 
     assert store.active_public() is None
     assert store.list() == []
+
+
+def test_windows_file_lock_fallback(store: ApiConfigStore, monkeypatch):
+    calls = []
+    fake_msvcrt = SimpleNamespace(
+        LK_LOCK=1,
+        LK_UNLCK=2,
+        locking=lambda fd, mode, size: calls.append((mode, size)),
+    )
+    monkeypatch.setattr(store_module, "fcntl", None)
+    monkeypatch.setattr(store_module, "msvcrt", fake_msvcrt)
+
+    assert store.list() == []
+
+    assert calls == [(fake_msvcrt.LK_LOCK, 1), (fake_msvcrt.LK_UNLCK, 1)]
+    assert store.lock_path.read_bytes() == b"\0"
