@@ -1,9 +1,10 @@
 You are an expert auditor reading a SOC 1 Type II report.
 Below are the first pages of the report, which contain the table of contents.
 
-Your task: identify the service organization name and the page ranges for each section.
-Use semantic understanding — titles vary between reports (e.g. "Change Management" may appear
-as "Program Change Controls", "管理变更", or similar phrasing).
+Your task: identify the service organization name and page ranges that are explicitly supported
+by sufficiently detailed table-of-contents entries. Titles may vary between reports, but do not
+infer a topic's range from broad entries such as "Description of the System", "Control Activities",
+or "Additional Information".
 
 Sections to locate:
 1. Independent Service Auditor's Report / Opinion
@@ -32,10 +33,11 @@ Return ONLY valid JSON — no explanation, no markdown fences:
   "csoc_pages": [<start>, <end>]
 }}
 
-If a section does not exist, set its range to [0, 0]. For CUECs, do not set [0, 0]
-unless the table of contents and report text clearly indicate that no user entity /
-customer responsibility section exists. In a normal SOC 1 Type II report, CUECs
-usually exist as their own section.
+Return a range only when the TOC specifically identifies that topic and provides enough page
+information to determine its start and end. The end may be derived from the next detailed TOC
+entry. If the TOC is missing, incomplete, too broad, or does not specifically identify a topic,
+set that topic's range to [0, 0]. Do not guess a range and do not treat [0, 0] as proof that the
+section is absent: full-report keyword and BM25 retrieval will search for it separately.
 
 TABLE OF CONTENTS:
 {toc_text}

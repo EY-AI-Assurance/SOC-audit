@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     parsed_dir: Path = storage_dir / "parsed"
     outputs_dir: Path = storage_dir / "outputs"
     prompts_dir: Path = Path(__file__).parent / "prompts"
+    search_terms_dir: Path = Path(__file__).parent / "search_terms"
     jobs_dir: Path = storage_dir / "jobs"
     templates_dir: Path = storage_dir / "templates"
     api_configs_dir: Path = storage_dir / "api_configs"

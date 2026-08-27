@@ -129,6 +129,48 @@ http://localhost:5173
   locks an immutable snapshot of the active connection, so later switching or
   editing does not affect a running job.
 
+## Sheet 6-9 Search Terms
+
+Page retrieval for Sheets 6-9 is configured in `backend/app/search_terms/`.
+Each UTF-8 JSON file contains one `keywords` list for each search topic. The
+same keywords are used for both direct page matching and BM25 search. The files
+are validated and reloaded at the start of every analysis job, so changes apply
+to the next job without restarting the backend.
+
+```mermaid
+flowchart TD
+    A["PDF 按页读取"] --> B["TOC 定位<br/>目录明确时使用章节页码"]
+    A --> C["关键词搜索<br/>在整份报告中寻找相关页面"]
+
+    K["可调整的关键词"] --> C
+
+    B --> D["合并两边找到的所有页面<br/>任一方法找到都会保留"]
+    C --> D
+
+    D --> E["去掉目录页和重复页<br/>补充前后相邻页"]
+
+    E --> F["交给 AI 提取<br/>页面过多时分批，但不删除"]
+
+    P["可调整的 Prompt<br/>决定提取什么、如何填写"] --> F
+
+    F --> G["填写 Sheet 6–9"]
+```
+
+TOC positioning and keyword search run in parallel. The system keeps the union
+of pages found by either method, so one method can recover pages missed by the
+other.
+
+- Put section titles, responsibility phrases, control-code prefixes, synonyms,
+  and Chinese/English variants together in the topic's `keywords` list.
+- Every keyword is searched literally and also submitted as an independent
+  BM25 query. All matching pages are combined with the TOC pages.
+- BM25 Top K and adjacent-page expansion are controlled by the application, so
+  users only need to maintain keywords.
+
+Leave `version` unchanged and edit only the `keywords` arrays. Invalid files
+fail the job with the filename and validation error instead of silently falling
+back to hard-coded terms.
+
 ## Notes
 
 - Uploaded PDFs, parsed JSON, jobs, and output Excel files are stored under `backend/storage/`.
