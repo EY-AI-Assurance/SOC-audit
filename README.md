@@ -182,6 +182,8 @@ The single distributable file is:
 dist\SOC-Audit.exe
 ```
 
+PyInstaller temporary work files are created under the Windows `%TEMP%` directory instead of the repository. This avoids common OneDrive or antivirus locks on `build\SOC-Audit\localpycs`. The build script stops on a non-zero pip, npm, or PyInstaller exit code and verifies the expected executable before reporting success.
+
 Users do not need Python or Node.js. They need WebView2 Runtime and network/VPN access to the configured API.
 
 ## Desktop storage and logs
