@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 # ── Report ────────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ class TemplateInfo(BaseModel):
     template_id: str
     name: str
     uploaded_at: str
-    available_sheets: list[int] = Field(default_factory=list)
+    available_sheets: list[int] = []
 
 
 # ── Job ───────────────────────────────────────────────────────────────────────
@@ -81,6 +81,7 @@ class JobResponse(BaseModel):
     status: str
     created_at: str
     reports: list[JobReportResult]
+    api_config: Optional[dict] = None
 
 
 class CreatedJobsResponse(BaseModel):
@@ -91,3 +92,52 @@ class CreateJobRequest(BaseModel):
     template_id: str
     report_ids: list[str]
     sheets: list[int]
+
+
+# ── API configuration ────────────────────────────────────────────────────────
+
+class ApiConfigCreate(BaseModel):
+    name: str
+    provider: str
+    base_url: str = ""
+    api_key: str
+    model: str = ""
+    dify_user: str = "soc-audit-local"
+    verify_tls: bool = True
+
+
+class ApiConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    dify_user: Optional[str] = None
+    verify_tls: Optional[bool] = None
+
+
+class ApiConfigSummary(BaseModel):
+    id: str
+    name: str
+    provider: str
+    protocol: str
+    base_url: str
+    model: str = ""
+    dify_user: str = ""
+    verify_tls: bool = True
+    masked_api_key: str
+    status: str
+    revision: int
+    is_active: bool
+    last_tested_at: Optional[str] = None
+    last_test_error: str = ""
+    created_at: str
+    updated_at: str
+
+
+class DiscoverModelsRequest(BaseModel):
+    config_id: Optional[str] = None
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    verify_tls: bool = True

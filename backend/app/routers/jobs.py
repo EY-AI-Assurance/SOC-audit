@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,12 +12,29 @@ from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.models.schemas import CreateJobRequest, CreatedJobsResponse, JobResponse, ReportSummary
-from app.routers.templates import get_template_meta, get_template_path
+from app.routers.templates import get_template_path
 from app.services.excel_writer import write_excel
 from app.services.extractor import extract
+from app.services.api_config_store import api_config_store
+from app.services.dify_client import LLMClient
 from app.services.pdf_parser import parse_pdf, save_parsed
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+WINDOWS_RESERVED_FILENAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
+
+
+def _safe_filename_component(value: str, fallback: str) -> str:
+    """Return a filename component valid on Windows, macOS, and Linux."""
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value)
+    cleaned = re.sub(r"\s+", "_", cleaned).strip(" ._")
+    if not cleaned or cleaned.upper() in WINDOWS_RESERVED_FILENAMES:
+        cleaned = fallback
+    return cleaned[:80].rstrip(" .") or fallback
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -54,9 +72,10 @@ def _finalize_job(job_id: str) -> None:
 
 # ── Background task ───────────────────────────────────────────────────────────
 
-def _bg_job(job_id: str) -> None:
+def _bg_job(job_id: str, api_snapshot: dict) -> None:
     state = _read_job(job_id)
     template_path = get_template_path(state["template_id"])
+    llm_client = LLMClient(api_snapshot)
 
     for report_entry in state["reports"]:
         report_id = report_entry["report_id"]
@@ -78,13 +97,18 @@ def _bg_job(job_id: str) -> None:
                                       status="PROCESSING", progress=pct,
                                       current_step=step)
 
-            form_data = extract(parsed_path, sheets=state["sheets"], progress_cb=_cb)
+            form_data = extract(
+                parsed_path,
+                llm_client=llm_client,
+                sheets=state["sheets"],
+                progress_cb=_cb,
+            )
 
             _update_report_in_job(job_id, report_id,
                                   status="PROCESSING", progress=95,
                                   current_step="Writing Excel")
 
-            safe = (form_data.system_name or report_id[:8]).replace("/", "_").replace(" ", "_")
+            safe = _safe_filename_component(form_data.system_name or "", report_id[:8])
             output_filename = f"Form_107-A_{safe}_{report_id[:8]}.xlsx"
             print(f"[JOB] Writing Excel to {output_filename}", flush=True)
             write_excel(form_data, settings.outputs_dir / output_filename,
@@ -132,18 +156,18 @@ def list_jobs():
 
 @router.post("", response_model=CreatedJobsResponse, status_code=202)
 def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
-    template_meta = get_template_meta(req.template_id)
-    available_sheets = set(template_meta.get("available_sheets", []))
-    requested_sheets = set(req.sheets)
+    template_path = get_template_path(req.template_id)  # validates template exists
+    try:
+        api_snapshot = api_config_store.active_snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    if not requested_sheets:
-        raise HTTPException(status_code=400, detail="Select at least one sheet")
-    if not requested_sheets <= available_sheets:
-        unsupported = sorted(requested_sheets - available_sheets)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Selected sheets are not available in this template: {unsupported}",
-        )
+    public_api_snapshot = {
+        "id": api_snapshot["id"],
+        "name": api_snapshot["name"],
+        "provider": api_snapshot["provider"],
+        "model": api_snapshot.get("model", ""),
+    }
 
     jobs = []
     for rid in req.report_ids:
@@ -166,14 +190,15 @@ def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
         job_state = {
             "job_id": job_id,
             "template_id": req.template_id,
-            "template_name": template_meta["name"],
-            "sheets": sorted(requested_sheets),
+            "template_name": template_path.name,
+            "sheets": req.sheets,
             "status": "processing",
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "api_config": public_api_snapshot,
             "reports": [report],
         }
         _write_job(job_id, job_state)
-        background_tasks.add_task(_bg_job, job_id)
+        background_tasks.add_task(_bg_job, job_id, dict(api_snapshot))
         jobs.append(JobResponse(**job_state))
 
     return CreatedJobsResponse(jobs=jobs)

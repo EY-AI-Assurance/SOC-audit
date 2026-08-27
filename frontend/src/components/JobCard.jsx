@@ -40,7 +40,7 @@ function estimateRemaining(createdAt, progress, now) {
 }
 
 export default function JobCard({ job, onDownload, onDelete }) {
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(0)
   const s = STATUS[job.status] || STATUS.processing
   const reportNames = job.reports.map(r => r.filename.replace('.pdf', '')).join(' + ')
 
@@ -74,6 +74,11 @@ export default function JobCard({ job, onDownload, onDelete }) {
           <p className="text-xs text-gray-400 mt-0.5">
             Template: {job.template_name}&nbsp;&nbsp;·&nbsp;&nbsp;Sheets: {job.sheets.join(' · ')}
           </p>
+          {job.api_config && (
+            <p className="text-xs text-gray-400 mt-0.5">
+              API: {job.api_config.name}{job.api_config.model ? ` / ${job.api_config.model}` : ''}
+            </p>
+          )}
         </div>
         <span className={`shrink-0 text-xs font-medium px-2.5 py-1 rounded-full ${s.badge}`}>
           {s.icon} {s.label}

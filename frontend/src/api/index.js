@@ -44,4 +44,14 @@ export const api = {
   getJob: (id)                    => req('GET',  `/jobs/${id}`),
   deleteJob: (id)                 => req('DELETE', `/jobs/${id}`),
   downloadUrl: (jobId, reportId)  => `${BASE}/jobs/${jobId}/download/${reportId}`,
+
+  // API configurations
+  listApiProviders: ()            => req('GET', '/api-configs/providers'),
+  listApiConfigs: ()              => req('GET', '/api-configs'),
+  createApiConfig: (config)       => req('POST', '/api-configs', config),
+  updateApiConfig: (id, config)   => req('PATCH', `/api-configs/${id}`, config),
+  deleteApiConfig: (id)           => req('DELETE', `/api-configs/${id}`),
+  discoverModels: (config)        => req('POST', '/api-configs/discover-models', config),
+  testApiConfig: (id)             => req('POST', `/api-configs/${id}/test`),
+  activateApiConfig: (id)         => req('POST', `/api-configs/${id}/activate`),
 }

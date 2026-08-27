@@ -14,71 +14,15 @@ from app.models.extraction import (
     Sheet2Data, Sheet3Data, Sheet6Data, Sheet7Data, Sheet8Data, Sheet9Data,
     SubserviceOrg, TOCData,
 )
-from app.services.dify_client import dify_client
+from app.services.dify_client import LLMClient
 from app.services.pdf_parser import load_parsed
-
-
-_SHEET6_RULES = {
-    "change_mgmt": {
-        "anchors": ["ccc_"],
-        "conditional_anchors": {
-            "apd_": ["change", "program", "release", "deployment", "production"],
-        },
-        "phrases": ["change management", "program change", "software change"],
-    },
-    "access_mgmt": {
-        "anchors": ["ivs_", "tvm_"],
-        "conditional_anchors": {
-            "apd_": ["access", "privileged", "permission", "account", "role"],
-        },
-        "phrases": [
-            "access management",
-            "logical access",
-            "privileged access",
-            "user access",
-            "vulnerability management",
-            "security configuration",
-        ],
-    },
-    "job_scheduling": {
-        "anchors": [],
-        "conditional_anchors": {},
-        "phrases": [
-            "job scheduling",
-            "job monitoring",
-            "scheduled job",
-            "batch job",
-            "job scheduler",
-        ],
-    },
-}
-
-_SHEET8_START_PHRASES = [
-    "complementary user entity controls",
-    "customer responsibilities",
-    "user control considerations",
-    "user entity responsibilities",
-    "customer control considerations",
-]
-
-_SHEET8_STOP_PHRASES = [
-    "complementary subservice organization controls",
-    "complementary sub-service organization controls",
-    "subservice organization controls",
-    "sub-service organization controls",
-    "section iv - description",
-    "section iv – description",
-    "section v",
-    "other information",
-]
-
-_SHEET8_RESPONSIBILITY_PHRASES = [
-    "user entities should",
-    "user entities are responsible",
-    "customers are responsible",
-    "customer administrators are responsible",
-    "clients should",
-]
+from app.services.retrieval import (
+    LoadedSearchProfile,
+    RetrievalContext,
+    RetrievalResult,
+    load_search_profiles,
+    normalize_text,
+)
 
 _SHEET8_BULLET_PATTERN = r"\s*[•▪●◼■\uf06e]\s*"
 _SHEET8_CLEAN_CHUNK_SIZE = 12
@@ -94,13 +38,13 @@ def _prompt(name: str, **kwargs) -> str:
     return (settings.prompts_dir / name).read_text(encoding="utf-8").format(**kwargs)
 
 
-def _parse_toc(pages: dict[int, str]) -> TOCData:
+def _parse_toc(llm_client: LLMClient, pages: dict[int, str]) -> TOCData:
     toc_text = "\n\n".join(
         f"[Page {p}]\n{pages[p]}"
         for p in range(1, settings.toc_max_pages + 1)
         if p in pages
     )
-    return TOCData(**dify_client.call_json(_prompt("toc.txt", toc_text=toc_text)))
+    return TOCData(**llm_client.call_json(_prompt("toc.txt", toc_text=toc_text)))
 
 
 def _detect_report_page_number(text: str) -> int | None:
@@ -168,15 +112,6 @@ def _pages_from_range(
     return {p for p in range(start, end + 1) if p in all_pages}
 
 
-def _expand_pages(page_numbers: set[int], all_pages: set[int], window: int = 1) -> set[int]:
-    expanded: set[int] = set()
-    for page_number in page_numbers:
-        for candidate in range(page_number - window, page_number + window + 1):
-            if candidate in all_pages:
-                expanded.add(candidate)
-    return expanded
-
-
 def _format_pages(
     pages: dict[int, str],
     page_numbers: list[int],
@@ -221,39 +156,6 @@ def _normalize_page_refs(page_refs: str, report_label: str) -> str:
     return f"{report_label}:\n" + "\n".join(lines)
 
 
-def _collect_candidate_pages(
-    pages: dict[int, str],
-    toc_range: list[int],
-    rules: dict,
-    report_to_pdf_page: dict[int, set[int]],
-) -> list[int]:
-    all_pages = set(pages)
-    toc_pages = _pages_from_range(toc_range, all_pages, report_to_pdf_page)
-    candidates = _expand_pages(toc_pages, all_pages)
-    anchors = [anchor.lower() for anchor in rules["anchors"]]
-    conditional_anchors = {
-        anchor.lower(): [keyword.lower() for keyword in keywords]
-        for anchor, keywords in rules["conditional_anchors"].items()
-    }
-    phrases = [phrase.lower() for phrase in rules["phrases"]]
-
-    for page_number, text in pages.items():
-        lowered_text = text.lower()
-        if any(anchor in lowered_text for anchor in anchors):
-            candidates.add(page_number)
-            continue
-        if any(phrase in lowered_text for phrase in phrases):
-            candidates.add(page_number)
-            continue
-        if any(
-            anchor in lowered_text and any(keyword in lowered_text for keyword in keywords)
-            for anchor, keywords in conditional_anchors.items()
-        ):
-            candidates.add(page_number)
-
-    return sorted(candidates)
-
-
 def _section_from_toc_range(
     pages: dict[int, str],
     page_range: list[int],
@@ -275,110 +177,47 @@ def _cover_pages_text(
     return _format_pages(pages, page_numbers, pdf_to_report_page)
 
 
-def _collect_sheet6_candidate_sections(
-    pages: dict[int, str],
-    toc: TOCData,
+def _retrieve_topic(
+    context: RetrievalContext,
+    profile: LoadedSearchProfile,
+    topic: str,
+    toc_range: list[int],
     report_to_pdf_page: dict[int, set[int]],
-    pdf_to_report_page: dict[int, int],
-) -> tuple[str, str, str]:
-    change_pages = _collect_candidate_pages(
-        pages, toc.change_mgmt_pages, _SHEET6_RULES["change_mgmt"], report_to_pdf_page
-    )
-    access_pages = _collect_candidate_pages(
-        pages, toc.access_mgmt_pages, _SHEET6_RULES["access_mgmt"], report_to_pdf_page
-    )
-    job_pages = _collect_candidate_pages(
-        pages, toc.job_scheduling_pages, _SHEET6_RULES["job_scheduling"], report_to_pdf_page
-    )
+) -> RetrievalResult:
+    try:
+        topic_profile = profile.topics[topic]
+    except KeyError as exc:
+        raise ValueError(
+            f"Search profile '{profile.name}' is missing topic '{topic}'"
+        ) from exc
 
-    print(
-        "[EXTRACTOR] Sheet 6 candidate pages: "
-        f"change={change_pages}, access={access_pages}, job={job_pages}",
-        flush=True,
+    toc_pages = _pages_from_range(
+        toc_range,
+        set(context.pages),
+        report_to_pdf_page,
     )
-
-    return (
-        _format_pages(pages, change_pages, pdf_to_report_page),
-        _format_pages(pages, access_pages, pdf_to_report_page),
-        _format_pages(pages, job_pages, pdf_to_report_page),
-    )
+    return context.retrieve(topic, topic_profile, toc_pages, profile)
 
 
-def _collect_sheet8_candidate_section(
+def _format_retrieval_batches(
     pages: dict[int, str],
-    toc: TOCData,
-    report_to_pdf_page: dict[int, set[int]],
+    retrieval: RetrievalResult,
     pdf_to_report_page: dict[int, int],
-) -> str:
-    all_pages = set(pages)
-    toc_candidates = _pages_from_range(
-        toc.cuec_pages, all_pages, report_to_pdf_page
-    )
-    candidates: set[int] = set()
-
-    sorted_pages = sorted(pages)
-    collecting = False
-    section_pages: set[int] = set()
-
-    def _is_sheet8_start_page(page_text: str) -> bool:
-        lowered_text = page_text.lower()
-        lines = [line.strip().lower() for line in page_text.splitlines()]
-        has_heading = any(line in _SHEET8_START_PHRASES for line in lines)
-        has_table_header = (
-            "complementary user entity controls" in lowered_text
-            and ("control objective" in lowered_text or "related control objective" in lowered_text)
-            and any(phrase in lowered_text for phrase in _SHEET8_RESPONSIBILITY_PHRASES)
-        )
-        return has_heading or has_table_header
-
-    for page_number in sorted_pages:
-        text = pages[page_number]
-        lowered = text.lower()
-        is_toc_page = page_number <= settings.toc_max_pages and "table of contents" in lowered
-
-        if (
-            not collecting
-            and not is_toc_page
-            and _is_sheet8_start_page(text)
-        ):
-            collecting = True
-
-        if collecting and page_number not in section_pages:
-            if section_pages and any(phrase in lowered for phrase in _SHEET8_STOP_PHRASES):
-                break
-            section_pages.add(page_number)
-
-    if section_pages:
-        candidates.update(section_pages)
-    else:
-        candidates.update(toc_candidates)
-
-    if not section_pages:
-        for page_number, text in pages.items():
-            lowered = text.lower()
-            has_table_header = (
-                "complementary user entity controls" in lowered
-                and ("control objective" in lowered or "related control objective" in lowered)
-            )
-            if has_table_header:
-                candidates.add(page_number)
-
-    candidate_pages = sorted(candidates)
-    print(
-        f"[EXTRACTOR] Sheet 8 candidate pages: {candidate_pages}",
-        flush=True,
-    )
-    return _format_pages(pages, candidate_pages, pdf_to_report_page)
+) -> list[str]:
+    return [
+        _format_pages(pages, batch, pdf_to_report_page)
+        for batch in retrieval.batches
+    ]
 
 
-def _extract_sheet2(cover_text: str, opinion_text: str) -> Sheet2Data:
-    return Sheet2Data(**dify_client.call_json(
+def _extract_sheet2(llm_client: LLMClient, cover_text: str, opinion_text: str) -> Sheet2Data:
+    return Sheet2Data(**llm_client.call_json(
         _prompt("sheet2_meta.txt", cover_text=cover_text, opinion_text=opinion_text)
     ))
 
 
-def _extract_sheet3(text: str) -> Sheet3Data:
-    raw = dify_client.call_json(_prompt("sheet3_opinion.txt", section_text=text))
+def _extract_sheet3(llm_client: LLMClient, text: str) -> Sheet3Data:
+    raw = llm_client.call_json(_prompt("sheet3_opinion.txt", section_text=text))
     opinion    = QualifiedOpinion(**raw["opinion"]) if raw.get("opinion") else None
     exceptions = [ExceptionItem(**e) for e in raw.get("exceptions", [])]
     return Sheet3Data(
@@ -388,12 +227,12 @@ def _extract_sheet3(text: str) -> Sheet3Data:
     )
 
 
-def _extract_sheet6(cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
+def _extract_sheet6(llm_client: LLMClient, cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
     print(
         f"[EXTRACTOR] Sheet 6 input chars: cm={len(cm)}, am={len(am)}, js={len(js)}",
         flush=True,
     )
-    raw = dify_client.call_json(
+    raw = llm_client.call_json(
         _prompt("sheet6_itgc.txt", report_label=report_label, cm_text=cm, am_text=am, js_text=js)
     )
     data = Sheet6Data(
@@ -407,10 +246,150 @@ def _extract_sheet6(cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
     return data
 
 
-def _extract_sheet7(text: str) -> Sheet7Data:
-    raw  = dify_client.call_json(_prompt("sheet7_subservice.txt", section_text=text))
+def _merge_page_refs(left: str, right: str, report_label: str) -> str:
+    entries: list[str] = []
+    seen: set[str] = set()
+    for value in (left, right):
+        for line in value.replace("\r\n", "\n").splitlines():
+            stripped = line.strip()
+            if not stripped or re.fullmatch(r"(?:CN|EN)\s+Report:?", stripped, re.IGNORECASE):
+                continue
+            key = normalize_text(stripped)
+            if key not in seen:
+                entries.append(stripped)
+                seen.add(key)
+    return f"{report_label}:\n" + "\n".join(entries) if entries else ""
+
+
+def _merge_control_id_rows(left: list[str], right: list[str]) -> list[str]:
+    merged_rows: list[str] = []
+    for index in range(max(len(left), len(right))):
+        values: list[str] = []
+        seen: set[str] = set()
+        for rows in (left, right):
+            if index >= len(rows):
+                continue
+            for value in rows[index].splitlines():
+                stripped = value.strip()
+                key = normalize_text(stripped)
+                if stripped and key not in seen:
+                    values.append(stripped)
+                    seen.add(key)
+        merged_rows.append("\n".join(values))
+    return merged_rows
+
+
+def _merge_itgc_sections(
+    left: ITGCSection,
+    right: ITGCSection,
+    report_label: str,
+) -> ITGCSection:
+    status_priority = {"Not applicable": 0, "No": 1, "Yes": 2}
+    has_process_description = max(
+        (left.has_process_description, right.has_process_description),
+        key=lambda value: status_priority[value],
+    )
+    return ITGCSection(
+        has_process_description=has_process_description,
+        page_refs=_merge_page_refs(left.page_refs, right.page_refs, report_label),
+        section_b_applicable=(
+            "Applicable"
+            if "Applicable" in (left.section_b_applicable, right.section_b_applicable)
+            else "Not applicable"
+        ),
+        section_c_applicable=(
+            "Applicable"
+            if "Applicable" in (left.section_c_applicable, right.section_c_applicable)
+            else "Not applicable"
+        ),
+        risk_control_ids=_merge_control_id_rows(
+            left.risk_control_ids,
+            right.risk_control_ids,
+        ),
+    )
+
+
+def _extract_sheet6_batches(
+    llm_client: LLMClient,
+    batches: dict[str, list[str]],
+    report_label: str,
+) -> Sheet6Data:
+    field_names = {
+        "change_mgmt": "change_mgmt",
+        "access_mgmt": "access_mgmt",
+        "job_scheduling": "job_scheduling",
+    }
+    first_text = {
+        topic: values[0] if values else ""
+        for topic, values in batches.items()
+    }
+    data = _extract_sheet6(
+        llm_client,
+        first_text.get("change_mgmt", ""),
+        first_text.get("access_mgmt", ""),
+        first_text.get("job_scheduling", ""),
+        report_label,
+    )
+
+    for topic, values in batches.items():
+        for extra_text in values[1:]:
+            partial = _extract_sheet6(
+                llm_client,
+                extra_text if topic == "change_mgmt" else "",
+                extra_text if topic == "access_mgmt" else "",
+                extra_text if topic == "job_scheduling" else "",
+                report_label,
+            )
+            field_name = field_names[topic]
+            setattr(
+                data,
+                field_name,
+                _merge_itgc_sections(
+                    getattr(data, field_name),
+                    getattr(partial, field_name),
+                    report_label,
+                ),
+            )
+    return data
+
+
+def _extract_sheet7(llm_client: LLMClient, text: str) -> Sheet7Data:
+    raw  = llm_client.call_json(_prompt("sheet7_subservice.txt", section_text=text))
     orgs = [SubserviceOrg(**o) for o in raw.get("organizations", [])]
     return Sheet7Data(has_subservice=raw["has_subservice"], organizations=orgs)
+
+
+def _extract_sheet7_batches(llm_client: LLMClient, batches: list[str]) -> Sheet7Data:
+    if not batches:
+        return Sheet7Data(has_subservice=False, organizations=[])
+
+    organizations: list[SubserviceOrg] = []
+    by_name: dict[str, SubserviceOrg] = {}
+    has_subservice = False
+    for text in batches:
+        partial = _extract_sheet7(llm_client, text)
+        has_subservice = has_subservice or partial.has_subservice
+        for organization in partial.organizations:
+            key = normalize_text(organization.name).strip(" .,:;，。；：")
+            if not key:
+                continue
+            existing = by_name.get(key)
+            if existing is None:
+                by_name[key] = organization
+                organizations.append(organization)
+                continue
+            if (
+                normalize_text(organization.services)
+                and normalize_text(organization.services) not in normalize_text(existing.services)
+            ):
+                existing.services = "\n".join(
+                    value for value in (existing.services, organization.services) if value.strip()
+                )
+
+    return Sheet7Data(
+        has_subservice=has_subservice or bool(organizations),
+        organizations=organizations,
+    )
 
 
 def _is_sheet8_structural_noise(text: str) -> bool:
@@ -436,7 +415,7 @@ def _dedupe_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
         is_duplicate = False
 
         for existing in deduped:
-            if existing.objective_and_page != item.objective_and_page:
+            if normalize_text(existing.objective_and_page) != normalize_text(item.objective_and_page):
                 continue
 
             normalized_existing = re.sub(
@@ -444,6 +423,9 @@ def _dedupe_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
                 " ",
                 existing.description.lower(),
             ).strip()
+            if normalized_existing == normalized_description:
+                is_duplicate = True
+                break
             if min(len(normalized_existing), len(normalized_description)) < 80:
                 continue
 
@@ -690,7 +672,7 @@ def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
     return prepared_text, deterministic_cuecs
 
 
-def _extract_sheet8(text: str) -> Sheet8Data:
+def _extract_sheet8(llm_client: LLMClient, text: str) -> Sheet8Data:
     prepared_text, deterministic_cuecs = _prepare_sheet8_text(text)
     print(
         "[EXTRACTOR] Sheet 8 input chars: "
@@ -700,16 +682,16 @@ def _extract_sheet8(text: str) -> Sheet8Data:
     )
 
     if len(deterministic_cuecs) >= 2:
-        cleaned_cuecs = _clean_sheet8_cuecs(deterministic_cuecs)
+        cleaned_cuecs = _clean_sheet8_cuecs(llm_client, deterministic_cuecs)
         return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cleaned_cuecs))
 
-    raw   = dify_client.call_json(_prompt("sheet8_cuec.txt", section_text=prepared_text))
+    raw   = llm_client.call_json(_prompt("sheet8_cuec.txt", section_text=prepared_text))
     cuecs = [CUECItem(**c) for c in raw.get("cuecs", [])]
-    cleaned_cuecs = _clean_sheet8_cuecs(cuecs) if len(cuecs) >= 2 else cuecs
+    cleaned_cuecs = _clean_sheet8_cuecs(llm_client, cuecs) if len(cuecs) >= 2 else cuecs
     return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cleaned_cuecs))
 
 
-def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
+def _clean_sheet8_cuecs(llm_client: LLMClient, cuecs: list[CUECItem]) -> list[CUECItem]:
     cleaned: list[CUECItem] = []
 
     for start in range(0, len(cuecs), _SHEET8_CLEAN_CHUNK_SIZE):
@@ -724,7 +706,7 @@ def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
         ]
 
         try:
-            raw = dify_client.call_json(
+            raw = llm_client.call_json(
                 _prompt(
                     "sheet8_clean_cuec.txt",
                     items_json=json.dumps(payload, ensure_ascii=False, indent=2),
@@ -776,12 +758,35 @@ def _clean_sheet8_cuecs(cuecs: list[CUECItem]) -> list[CUECItem]:
     return cleaned
 
 
-def _extract_sheet9(text: str) -> Sheet9Data:
-    raw = dify_client.call_json(_prompt("sheet9_csoc.txt", section_text=text))
+def _extract_sheet8_batches(llm_client: LLMClient, batches: list[str]) -> Sheet8Data:
+    cuecs: list[CUECItem] = []
+    for text in batches:
+        cuecs.extend(_extract_sheet8(llm_client, text).cuecs)
+    return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cuecs))
+
+
+def _extract_sheet9(llm_client: LLMClient, text: str) -> Sheet9Data:
+    raw = llm_client.call_json(_prompt("sheet9_csoc.txt", section_text=text))
     raw_csocs = raw.get("csocs", []) if isinstance(raw, dict) else raw
     if not isinstance(raw_csocs, list):
         raise ValueError("Sheet 9 response must be a JSON object with 'csocs' or a JSON array")
     csocs = [CSOCItem(**c) for c in raw_csocs]
+    return Sheet9Data(csocs=csocs)
+
+
+def _extract_sheet9_batches(llm_client: LLMClient, batches: list[str]) -> Sheet9Data:
+    csocs: list[CSOCItem] = []
+    seen: set[tuple[str, str, str]] = set()
+    for text in batches:
+        for item in _extract_sheet9(llm_client, text).csocs:
+            key = (
+                normalize_text(item.subservice_org),
+                normalize_text(item.objective_and_page),
+                normalize_text(item.description),
+            )
+            if key not in seen:
+                csocs.append(item)
+                seen.add(key)
     return Sheet9Data(csocs=csocs)
 
 
@@ -799,6 +804,7 @@ _STEP_PCT = {
 
 def extract(
     parsed_path: Path,
+    llm_client: LLMClient,
     sheets: list[int] | None = None,
     progress_cb: Callable[[str, int], None] | None = None,
 ) -> ExtractedFormData:
@@ -811,9 +817,19 @@ def extract(
 
     pages = load_parsed(parsed_path)
     report_to_pdf_page, pdf_to_report_page = _build_page_number_maps(pages)
+    retrieval_sheet_numbers = set(sheets) & {6, 7, 8, 9}
+    search_profiles = load_search_profiles(
+        settings.search_terms_dir,
+        retrieval_sheet_numbers,
+    )
+    retrieval_context = (
+        RetrievalContext(pages, toc_max_pages=settings.toc_max_pages)
+        if retrieval_sheet_numbers
+        else None
+    )
 
     _cb("Locating sections (TOC)", _STEP_PCT["toc"][0])
-    toc = _parse_toc(pages)
+    toc = _parse_toc(llm_client, pages)
     print(f"[EXTRACTOR] TOC: system={toc.system_name}, opinion={toc.opinion_pages}, cm={toc.change_mgmt_pages}", flush=True)
     print(
         "[EXTRACTOR] Page map sample: "
@@ -822,12 +838,34 @@ def extract(
     )
     _cb("Sections located", _STEP_PCT["toc"][1])
 
+    retrievals: dict[tuple[int, str], RetrievalResult] = {}
+    if retrieval_context is not None:
+        retrieval_specs = {
+            (6, "change_mgmt"): toc.change_mgmt_pages,
+            (6, "access_mgmt"): toc.access_mgmt_pages,
+            (6, "job_scheduling"): toc.job_scheduling_pages,
+            (7, "subservice"): toc.subservice_pages,
+            (8, "cuec"): toc.cuec_pages,
+            (9, "csoc"): toc.csoc_pages,
+        }
+        for (sheet_number, topic), toc_range in retrieval_specs.items():
+            if sheet_number not in retrieval_sheet_numbers:
+                continue
+            retrievals[(sheet_number, topic)] = _retrieve_topic(
+                retrieval_context,
+                search_profiles[sheet_number],
+                topic,
+                toc_range,
+                report_to_pdf_page,
+            )
+
     result = ExtractedFormData(system_name=toc.system_name)
 
     if 2 in sheets:
         logger.info("Starting Sheet 2 extraction")
         _cb("Extracting report metadata (Sheet 2)", _STEP_PCT[2][0])
         result.sheet2 = _extract_sheet2(
+            llm_client,
             _cover_pages_text(pages, pdf_to_report_page),
             _section_from_toc_range(
                 pages, toc.opinion_pages, report_to_pdf_page, pdf_to_report_page
@@ -840,6 +878,7 @@ def extract(
         logger.info("Starting Sheet 3 extraction")
         _cb("Extracting opinion & exceptions (Sheet 3)", _STEP_PCT[3][0])
         result.sheet3 = _extract_sheet3(
+            llm_client,
             _section_from_toc_range(
                 pages, toc.opinion_pages, report_to_pdf_page, pdf_to_report_page
             )
@@ -851,14 +890,24 @@ def extract(
     if 6 in sheets:
         logger.info("Starting Sheet 6 extraction")
         _cb("Extracting ITGC controls (Sheet 6)", _STEP_PCT[6][0])
-        cm_text, am_text, js_text = _collect_sheet6_candidate_sections(
-            pages, toc, report_to_pdf_page, pdf_to_report_page
+        sheet6_batches = {
+            topic: _format_retrieval_batches(
+                pages,
+                retrievals[(6, topic)],
+                pdf_to_report_page,
+            )
+            for topic in ("change_mgmt", "access_mgmt", "job_scheduling")
+        }
+        sheet6_report_label = _detect_report_label(
+            "\n\n".join(
+                text
+                for batches in sheet6_batches.values()
+                for text in batches
+            )
         )
-        sheet6_report_label = _detect_report_label("\n\n".join([cm_text, am_text, js_text]))
-        result.sheet6 = _extract_sheet6(
-            cm_text,
-            am_text,
-            js_text,
+        result.sheet6 = _extract_sheet6_batches(
+            llm_client,
+            sheet6_batches,
             sheet6_report_label,
         )
         logger.info("Sheet 6 done")
@@ -867,10 +916,13 @@ def extract(
     if 7 in sheets:
         logger.info("Starting Sheet 7 extraction")
         _cb("Identifying subservice organizations (Sheet 7)", _STEP_PCT[7][0])
-        result.sheet7 = _extract_sheet7(
-            _section_from_toc_range(
-                pages, toc.subservice_pages, report_to_pdf_page, pdf_to_report_page
-            )
+        result.sheet7 = _extract_sheet7_batches(
+            llm_client,
+            _format_retrieval_batches(
+                pages,
+                retrievals[(7, "subservice")],
+                pdf_to_report_page,
+            ),
         )
         logger.info("Sheet 7 done: has_subservice=%s", result.sheet7.has_subservice)
         _cb("Sheet 7 done", _STEP_PCT[7][1])
@@ -878,10 +930,13 @@ def extract(
     if 8 in sheets:
         logger.info("Starting Sheet 8 extraction")
         _cb("Extracting CUECs (Sheet 8)", _STEP_PCT[8][0])
-        result.sheet8 = _extract_sheet8(
-            _collect_sheet8_candidate_section(
-                pages, toc, report_to_pdf_page, pdf_to_report_page
-            )
+        result.sheet8 = _extract_sheet8_batches(
+            llm_client,
+            _format_retrieval_batches(
+                pages,
+                retrievals[(8, "cuec")],
+                pdf_to_report_page,
+            ),
         )
         logger.info("Sheet 8 done: cuecs=%d", len(result.sheet8.cuecs))
         _cb("Sheet 8 done", _STEP_PCT[8][1])
@@ -889,19 +944,14 @@ def extract(
     if 9 in sheets:
         logger.info("Starting Sheet 9 extraction")
         _cb("Extracting CSOCs (Sheet 9)", _STEP_PCT[9][0])
-        sheet7_for_dependency = result.sheet7 or _extract_sheet7(
-            _section_from_toc_range(
-                pages, toc.subservice_pages, report_to_pdf_page, pdf_to_report_page
-            )
+        result.sheet9 = _extract_sheet9_batches(
+            llm_client,
+            _format_retrieval_batches(
+                pages,
+                retrievals[(9, "csoc")],
+                pdf_to_report_page,
+            ),
         )
-        if sheet7_for_dependency.has_subservice:
-            result.sheet9 = _extract_sheet9(
-                _section_from_toc_range(
-                    pages, toc.csoc_pages, report_to_pdf_page, pdf_to_report_page
-                )
-            )
-        else:
-            result.sheet9 = Sheet9Data(csocs=[])
         logger.info("Sheet 9 done: csocs=%d", len(result.sheet9.csocs))
         _cb("Sheet 9 done", _STEP_PCT[9][1])
 

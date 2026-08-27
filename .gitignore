@@ -8,6 +8,7 @@ backend/storage/parsed/
 backend/storage/outputs/
 backend/storage/jobs/
 backend/storage/templates/
+backend/storage/api_configs/
 
 # Python
 __pycache__/

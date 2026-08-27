@@ -16,7 +16,12 @@ Your tasks for each of the three ITGC sections (Change Management, Access Manage
 IMPORTANT — has_process_description / section_c_applicable for Job Scheduling:
 - Set "Not applicable" if the report states that no service-organization-controlled scheduled jobs exist,
   or if job scheduling is entirely absent from the ITGC scope.
+- Do not infer that scheduled jobs exist merely because the report describes general monitoring,
+  incident management, backups, system availability, or customer-controlled scheduling.
 - Set "Yes" / "Applicable" only if the report describes actual batch job or scheduled task controls operated by the service organization.
+- When has_process_description is "Not applicable", return an empty page_refs value. The workbook
+  will populate III.A.1.c with the standard explanation that no scheduled tasks are controlled by or
+  the responsibility of the service organization.
 
 IMPORTANT — Control ID selection (do NOT include every control in the report):
 - Each risk row should only receive controls whose primary purpose directly addresses that risk.

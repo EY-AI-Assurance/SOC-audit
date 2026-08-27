@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { Link } from 'react-router-dom'
 
+const DEFAULT_SHEETS = [2, 3, 6, 7, 8]
 const SHEET_LABELS = {
   2: 'Sheet 2 — Report Metadata',
   3: 'Sheet 3 — Opinion & Exceptions',
@@ -15,33 +17,38 @@ export default function NewJobModal({ onClose, onCreated }) {
   const [reports, setReports]           = useState([])
   const [selectedTemplate, setTemplate] = useState('')
   const [selectedReports, setReports_]  = useState([])
-  const [selectedSheets, setSheets]     = useState([])
+  const [selectedSheets, setSheets]     = useState(DEFAULT_SHEETS)
   const [uploading, setUploading]       = useState(false)
   const [submitting, setSubmitting]     = useState(false)
   const [error, setError]               = useState('')
+  const [activeApi, setActiveApi]       = useState(null)
   const reportInputRef                  = useRef()
   const templateInputRef                = useRef()
 
   useEffect(() => {
-    Promise.all([api.listTemplates(), api.listReports()]).then(([t, r]) => {
+    Promise.all([api.listTemplates(), api.listReports(), api.listApiConfigs()]).then(([t, r, a]) => {
       setTemplates(t.templates || [])
       const ready = (r.reports || []).filter(rep => rep.status === 'ready')
       setReports(ready)
       if (t.templates?.length > 0) {
         const firstTemplate = t.templates[0]
         setTemplate(firstTemplate.template_id)
-        setSheets(firstTemplate.available_sheets || [])
+        setSheets(firstTemplate.available_sheets?.length ? firstTemplate.available_sheets : DEFAULT_SHEETS)
       }
+      setActiveApi(a.active || null)
     }).catch(e => setError(e.message))
   }, [])
 
   const selectedTemplateMeta = templates.find(t => t.template_id === selectedTemplate)
-  const availableSheets = selectedTemplateMeta?.available_sheets || []
+  const availableSheets = selectedTemplateMeta?.available_sheets?.length
+    ? selectedTemplateMeta.available_sheets
+    : DEFAULT_SHEETS
 
-  const handleSelectTemplate = (templateId) => {
+  const handleTemplateChange = (templateId) => {
     const template = templates.find(item => item.template_id === templateId)
+    const sheets = template?.available_sheets?.length ? template.available_sheets : DEFAULT_SHEETS
     setTemplate(templateId)
-    setSheets(template?.available_sheets || [])
+    setSheets(sheets)
   }
 
   const toggleReport = (id) =>
@@ -50,8 +57,7 @@ export default function NewJobModal({ onClose, onCreated }) {
   const toggleSheet = (s) =>
     setSheets(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
 
-  const allSheetsSelected = availableSheets.length > 0
-    && availableSheets.every(sheet => selectedSheets.includes(sheet))
+  const allSheetsSelected = availableSheets.every(sheet => selectedSheets.includes(sheet))
   const jobCount = selectedReports.length
 
   const handleUploadReport = async (e) => {
@@ -92,7 +98,7 @@ export default function NewJobModal({ onClose, onCreated }) {
       const res = await api.uploadTemplate(file)
       setTemplates(prev => [...prev, res])
       setTemplate(res.template_id)
-      setSheets(res.available_sheets || [])
+      setSheets(res.available_sheets?.length ? res.available_sheets : DEFAULT_SHEETS)
     } catch (e) {
       setError(e.message)
     }
@@ -126,12 +132,27 @@ export default function NewJobModal({ onClose, onCreated }) {
         <div className="overflow-y-auto px-6 py-4 flex flex-col gap-5">
 
           {/* Template */}
+          <div className={`rounded-xl px-4 py-3 border ${activeApi ? 'bg-green-50 border-green-100' : 'bg-amber-50 border-amber-200'}`}>
+            <p className="text-xs font-semibold text-gray-700">API for this job</p>
+            {activeApi ? (
+              <p className="text-sm text-gray-700 mt-1">
+                {activeApi.name}{activeApi.model ? ` / ${activeApi.model}` : ''}
+                <span className="ml-2 text-xs text-green-600">Verified</span>
+              </p>
+            ) : (
+              <p className="text-xs text-amber-700 mt-1">
+                No verified API is active. <Link to="/apis" onClick={onClose} className="font-semibold underline">Configure APIs</Link>
+              </p>
+            )}
+          </div>
+
+          {/* Template */}
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">Template</label>
             {templates.length > 0 ? (
               <select
                 value={selectedTemplate}
-                onChange={e => handleSelectTemplate(e.target.value)}
+                onChange={e => handleTemplateChange(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FFE600]"
               >
                 {templates.map(t => (
@@ -200,11 +221,6 @@ export default function NewJobModal({ onClose, onCreated }) {
                   <span className="text-sm text-gray-700">{SHEET_LABELS[s]}</span>
                 </label>
               ))}
-              {selectedTemplate && availableSheets.length === 0 && (
-                <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
-                  This template does not contain any supported sheets. Supported sheets are 2, 3, 6, 7, 8, and 9.
-                </p>
-              )}
             </div>
           </div>
 
@@ -216,7 +232,7 @@ export default function NewJobModal({ onClose, onCreated }) {
           <button onClick={onClose} className="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
           <button
             onClick={handleSubmit}
-            disabled={submitting || !selectedTemplate || availableSheets.length === 0}
+            disabled={submitting || !activeApi}
             className="px-5 py-2 bg-[#FFE600] text-[#2E2E38] text-sm font-semibold rounded-lg hover:bg-yellow-300 transition-colors disabled:opacity-50"
           >
             {submitting ? 'Creating...' : `Run ${jobCount > 1 ? `${jobCount} Jobs` : 'Job'} →`}

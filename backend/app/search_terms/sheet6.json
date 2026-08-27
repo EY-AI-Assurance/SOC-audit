@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "topics": {
+    "change_mgmt": {
+      "keywords": [
+        "Change Management",
+        "Program Change Controls",
+        "System Development and Change Management",
+        "changes are tested and approved prior to implementation",
+        "changes to production are authorized",
+        "developers are restricted from migrating changes to production",
+        "change management program change software change",
+        "change testing approval production deployment",
+        "release management production migration",
+        "CCC_",
+        "APD change program release deployment production",
+        "变更管理 程序变更",
+        "生产环境 发布 审批 测试"
+      ]
+    },
+    "access_mgmt": {
+      "keywords": [
+        "Access Management",
+        "Logical Access",
+        "User Access Administration",
+        "Logical Security",
+        "access is restricted to authorized users",
+        "user access is reviewed periodically",
+        "access is removed upon termination",
+        "logical access user access privileged access",
+        "account provisioning access approval least privilege",
+        "access termination periodic access review",
+        "password configuration vulnerability security baseline",
+        "IVS_",
+        "TVM_",
+        "APD access privileged permission account role",
+        "逻辑访问 用户权限 特权访问",
+        "账号开通 权限审批 离职权限"
+      ]
+    },
+    "job_scheduling": {
+      "keywords": [
+        "Job Scheduling",
+        "Job Scheduling and Monitoring",
+        "Batch Processing",
+        "scheduled jobs are monitored",
+        "failed jobs are investigated",
+        "access to the job scheduler is restricted",
+        "job scheduling job monitoring scheduled job",
+        "batch processing batch job job scheduler",
+        "failed incomplete jobs alerts investigation",
+        "作业调度 作业监控 计划任务",
+        "批处理 失败任务 告警"
+      ]
+    }
+  }
+}
