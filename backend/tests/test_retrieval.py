@@ -49,7 +49,33 @@ def test_builtin_bm25_ranks_page_with_more_query_evidence_first():
 
     ranking = context._bm25_pages("access request approval provisioning", top_k=3)
 
-    assert ranking[0] == 2
+    assert ranking == [2]
+
+
+def test_default_bm25_limit_is_three_pages_per_keyword():
+    context = RetrievalContext(
+        {
+            page_number: f"access management evidence {page_number}"
+            for page_number in range(1, 8)
+        },
+        toc_max_pages=0,
+    )
+
+    ranking = context._bm25_pages("access management", top_k=context.bm25_top_k)
+
+    assert len(ranking) == 3
+
+
+def test_bm25_requires_both_terms_for_a_two_term_keyword():
+    context = RetrievalContext({
+        1: "Access is monitored.",
+        2: "Logical access controls are documented.",
+        3: "Management reviews operations.",
+    }, toc_max_pages=0)
+
+    ranking = context._bm25_pages("access management", top_k=6)
+
+    assert ranking == []
 
 
 def test_backend_requirements_do_not_need_external_bm25_package():

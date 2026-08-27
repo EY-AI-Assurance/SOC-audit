@@ -166,6 +166,9 @@ other.
   BM25 query. All matching pages are combined with the TOC pages.
 - BM25 Top K and adjacent-page expansion are controlled by the application, so
   users only need to maintain keywords.
+- To limit broad BM25 results, a multi-word keyword must match at least 75% of
+  its distinct terms (and at least two terms), and each keyword contributes at
+  most three BM25 pages. Direct literal matches are still always retained.
 - BM25 is implemented inside the backend with the Python standard library; no
   separate `rank-bm25` or NumPy installation is required on Windows.
 

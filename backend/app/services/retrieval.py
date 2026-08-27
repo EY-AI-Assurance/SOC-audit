@@ -37,8 +37,9 @@ _WORD_PATTERN = re.compile(r"[a-z0-9]+(?:[_-][a-z0-9]+)*")
 _CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
 _PAGE_BATCH_SIZE = 12
 _PAGE_BATCH_OVERLAP = 1
-_DEFAULT_BM25_TOP_K = 12
+_DEFAULT_BM25_TOP_K = 3
 _DEFAULT_ADJACENT_PAGE_WINDOW = 1
+_DEFAULT_BM25_MIN_TERM_COVERAGE = 0.75
 
 
 class _BM25Index:
@@ -304,11 +305,24 @@ class RetrievalContext:
         if not query_tokens:
             return []
         query_token_set = set(query_tokens)
+        required_matches = (
+            1
+            if len(query_token_set) == 1
+            else min(
+                len(query_token_set),
+                max(
+                    2,
+                    math.ceil(
+                        len(query_token_set) * _DEFAULT_BM25_MIN_TERM_COVERAGE
+                    ),
+                ),
+            )
+        )
         scores = self.bm25.get_scores(query_tokens)
         matches = [
             (page_number, float(scores[index]))
             for index, page_number in enumerate(self.page_numbers)
-            if query_token_set & self.page_token_sets[page_number]
+            if len(query_token_set & self.page_token_sets[page_number]) >= required_matches
             and not self._is_toc_page(page_number)
         ]
         matches.sort(key=lambda item: (-item[1], item[0]))
