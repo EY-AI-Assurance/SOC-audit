@@ -8,17 +8,17 @@ Top K pages; they are never fused to discard pages recalled by another signal.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from hashlib import sha256
 import json
 import logging
+import math
 from pathlib import Path
 import re
 import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from rank_bm25 import BM25Okapi
 
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,63 @@ _PAGE_BATCH_SIZE = 12
 _PAGE_BATCH_OVERLAP = 1
 _DEFAULT_BM25_TOP_K = 12
 _DEFAULT_ADJACENT_PAGE_WINDOW = 1
+
+
+class _BM25Index:
+    """Small, dependency-free Okapi BM25 index for one report's pages."""
+
+    def __init__(
+        self,
+        corpus: list[list[str]],
+        k1: float = 1.2,
+        b: float = 0.75,
+    ):
+        self.k1 = k1
+        self.b = b
+        self.document_lengths = [len(document) for document in corpus]
+        self.average_document_length = (
+            sum(self.document_lengths) / len(corpus)
+            if corpus
+            else 0.0
+        )
+        self.term_frequencies = [Counter(document) for document in corpus]
+
+        document_frequency: Counter[str] = Counter()
+        for frequencies in self.term_frequencies:
+            document_frequency.update(frequencies.keys())
+
+        corpus_size = len(corpus)
+        self.inverse_document_frequency = {
+            term: math.log(
+                1.0 + (corpus_size - frequency + 0.5) / (frequency + 0.5)
+            )
+            for term, frequency in document_frequency.items()
+        }
+
+    def get_scores(self, query_tokens: list[str]) -> list[float]:
+        scores: list[float] = []
+        for frequencies, document_length in zip(
+            self.term_frequencies,
+            self.document_lengths,
+        ):
+            length_ratio = (
+                document_length / self.average_document_length
+                if self.average_document_length
+                else 0.0
+            )
+            score = 0.0
+            for token in query_tokens:
+                term_frequency = frequencies.get(token, 0)
+                if not term_frequency:
+                    continue
+                denominator = term_frequency + self.k1 * (
+                    1.0 - self.b + self.b * length_ratio
+                )
+                score += self.inverse_document_frequency.get(token, 0.0) * (
+                    term_frequency * (self.k1 + 1.0) / denominator
+                )
+            scores.append(score)
+        return scores
 
 
 def normalize_text(text: str) -> str:
@@ -229,7 +286,7 @@ class RetrievalContext:
             for page_number, tokens in self.page_tokens.items()
         }
         corpus = [self.page_tokens[page_number] or ["__empty_page__"] for page_number in self.page_numbers]
-        self.bm25 = BM25Okapi(corpus) if corpus else None
+        self.bm25 = _BM25Index(corpus) if corpus else None
 
     def _is_toc_page(self, page_number: int) -> bool:
         text = self.normalized_pages[page_number]

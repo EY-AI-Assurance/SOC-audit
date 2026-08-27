@@ -40,6 +40,24 @@ def test_tokenize_preserves_control_ids_and_builds_chinese_ngrams():
     assert "用户实" in tokens
 
 
+def test_builtin_bm25_ranks_page_with_more_query_evidence_first():
+    context = RetrievalContext({
+        1: "General system description.",
+        2: "Access requests require approval before account provisioning.",
+        3: "Access access access monitoring.",
+    }, toc_max_pages=0)
+
+    ranking = context._bm25_pages("access request approval provisioning", top_k=3)
+
+    assert ranking[0] == 2
+
+
+def test_backend_requirements_do_not_need_external_bm25_package():
+    requirements = Path(__file__).parents[1] / "requirements.txt"
+
+    assert "rank-bm25" not in requirements.read_text(encoding="utf-8").lower()
+
+
 def test_retrieval_unions_toc_direct_keywords_bm25_and_excludes_toc_page():
     pages = {
         1: "Table of Contents\nComplementary Subservice Organization Controls .... 56",

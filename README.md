@@ -166,6 +166,8 @@ other.
   BM25 query. All matching pages are combined with the TOC pages.
 - BM25 Top K and adjacent-page expansion are controlled by the application, so
   users only need to maintain keywords.
+- BM25 is implemented inside the backend with the Python standard library; no
+  separate `rank-bm25` or NumPy installation is required on Windows.
 
 Leave `version` unchanged and edit only the `keywords` arrays. Invalid files
 fail the job with the filename and validation error instead of silently falling
