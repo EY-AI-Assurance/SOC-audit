@@ -30,15 +30,6 @@ def _cell(ws, row: int, col: int):
     return c
 
 
-def _sheets_by_number(workbook) -> dict[int, object]:
-    sheets = {}
-    for sheet_name in workbook.sheetnames:
-        match = re.match(r"^\s*(\d+)(?:\s*[.\-、:]|\s+)", sheet_name)
-        if match:
-            sheets[int(match.group(1))] = workbook[sheet_name]
-    return sheets
-
-
 # ── Sheet 6 row map ───────────────────────────────────────────────────────────
 
 _S6 = {
@@ -429,20 +420,20 @@ def write_excel(
     shutil.copy2(template_path, output_path)
     wb = openpyxl.load_workbook(output_path)
 
-    ws = _sheets_by_number(wb)
+    ws = {name.strip(): wb[name] for name in wb.sheetnames}
 
     if data.sheet2:
-        _write_sheet2(ws[2], data)
+        _write_sheet2(ws["2.索引信息"], data)
     if data.sheet3:
-        _write_sheet3(ws[3], data)
+        _write_sheet3(ws["3.报告保留意见和测试异常情况"], data)
     if data.sheet6:
-        _write_sheet6(ws[6], data)
+        _write_sheet6(ws["6.IT流程和IT一般控制"], data)
     if data.sheet7:
-        _write_sheet7(ws[7], data)
+        _write_sheet7(ws["7.子服务机构"], data)
     if data.sheet8:
-        _write_sheet8(ws[8], data)
+        _write_sheet8(ws["8.补偿性用户实体控制"], data)
     if data.sheet9:
-        _write_sheet9(ws[9], data)
+        _write_sheet9(ws["9.补偿性分包服务机构控制"], data)
 
     wb.save(output_path)
 

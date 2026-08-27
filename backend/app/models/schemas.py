@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 # ── Report ────────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ class TemplateInfo(BaseModel):
     template_id: str
     name: str
     uploaded_at: str
-    available_sheets: list[int] = Field(default_factory=list)
+    available_sheets: list[int] = []
 
 
 # ── Job ───────────────────────────────────────────────────────────────────────
