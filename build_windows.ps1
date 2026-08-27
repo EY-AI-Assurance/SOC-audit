@@ -25,6 +25,11 @@ Write-Warning "The local backend/.env file, including its API credentials, will 
 $bundleMode = if ($DebugBuild) { "--onedir" } else { "--onefile" }
 $windowMode = if ($DebugBuild) { "--console" } else { "--windowed" }
 $distPath = Join-Path $PSScriptRoot "dist"
+$backendPath = Join-Path $PSScriptRoot "backend"
+$desktopEntryPath = Join-Path $PSScriptRoot "desktop.py"
+$promptsPath = Join-Path $backendPath "app\prompts"
+$searchTermsPath = Join-Path $backendPath "app\search_terms"
+$envPath = Join-Path $backendPath ".env"
 $tempBuildRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("SOC-Audit-Build-" + [guid]::NewGuid().ToString("N"))
 $frontendSourcePath = Join-Path $PSScriptRoot "frontend"
 $frontendWorkPath = Join-Path $tempBuildRoot "frontend"
@@ -78,26 +83,34 @@ try {
         }
     }
 
-    $frontendDataArg = "{0}:frontend/dist" -f $frontendDistPath
+    # PyInstaller resolves relative inputs from the generated spec file's
+    # directory. The spec lives under %TEMP%, so every project input must be
+    # absolute. PathSeparator is ';' on Windows, which also avoids ambiguity
+    # with the drive-letter colon in paths such as C:\\... .
+    $dataSeparator = [System.IO.Path]::PathSeparator
+    $frontendDataArg = "{0}{1}frontend/dist" -f $frontendDistPath, $dataSeparator
+    $promptsDataArg = "{0}{1}backend/app/prompts" -f $promptsPath, $dataSeparator
+    $searchTermsDataArg = "{0}{1}backend/app/search_terms" -f $searchTermsPath, $dataSeparator
+    $envDataArg = "{0}{1}." -f $envPath, $dataSeparator
     $pyinstallerArgs = @(
         "--noconfirm"
         "--clean"
         $bundleMode
         $windowMode
         "--name", "SOC-Audit"
-        "--paths", "backend"
+        "--paths", $backendPath
         "--distpath", $distPath
         "--workpath", $pyinstallerWorkPath
         "--specpath", $pyinstallerWorkPath
         "--add-data", $frontendDataArg
-        "--add-data", "backend/app/prompts:backend/app/prompts"
-        "--add-data", "backend/app/search_terms:backend/app/search_terms"
-        "--add-data", "backend/.env:."
+        "--add-data", $promptsDataArg
+        "--add-data", $searchTermsDataArg
+        "--add-data", $envDataArg
         "--collect-all", "pdfplumber"
         "--collect-all", "pdfminer"
         "--collect-all", "openpyxl"
         "--collect-submodules", "uvicorn"
-        "desktop.py"
+        $desktopEntryPath
     )
 
     Write-Host "Building SOC-Audit..."
