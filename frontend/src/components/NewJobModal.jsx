@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { Link } from 'react-router-dom'
 
-const DEFAULT_SHEETS = [2, 3, 6, 7, 8]
 const SHEET_LABELS = {
   2: 'Sheet 2 — Report Metadata',
   3: 'Sheet 3 — Opinion & Exceptions',
@@ -17,7 +16,7 @@ export default function NewJobModal({ onClose, onCreated }) {
   const [reports, setReports]           = useState([])
   const [selectedTemplate, setTemplate] = useState('')
   const [selectedReports, setReports_]  = useState([])
-  const [selectedSheets, setSheets]     = useState(DEFAULT_SHEETS)
+  const [selectedSheets, setSheets]     = useState([])
   const [uploading, setUploading]       = useState(false)
   const [submitting, setSubmitting]     = useState(false)
   const [error, setError]               = useState('')
@@ -33,16 +32,14 @@ export default function NewJobModal({ onClose, onCreated }) {
       if (t.templates?.length > 0) {
         const firstTemplate = t.templates[0]
         setTemplate(firstTemplate.template_id)
-        setSheets(firstTemplate.available_sheets?.length ? firstTemplate.available_sheets : DEFAULT_SHEETS)
+        setSheets(firstTemplate.available_sheets || [])
       }
       setActiveApi(a.active || null)
     }).catch(e => setError(e.message))
   }, [])
 
   const selectedTemplateMeta = templates.find(t => t.template_id === selectedTemplate)
-  const availableSheets = selectedTemplateMeta?.available_sheets?.length
-    ? selectedTemplateMeta.available_sheets
-    : DEFAULT_SHEETS
+  const availableSheets = selectedTemplateMeta?.available_sheets || []
 
   const handleTemplateChange = (templateId) => {
     const template = templates.find(item => item.template_id === templateId)
@@ -57,7 +54,8 @@ export default function NewJobModal({ onClose, onCreated }) {
   const toggleSheet = (s) =>
     setSheets(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
 
-  const allSheetsSelected = availableSheets.every(sheet => selectedSheets.includes(sheet))
+  const allSheetsSelected = availableSheets.length > 0
+    && availableSheets.every(sheet => selectedSheets.includes(sheet))
   const jobCount = selectedReports.length
 
   const handleUploadReport = async (e) => {
@@ -98,7 +96,7 @@ export default function NewJobModal({ onClose, onCreated }) {
       const res = await api.uploadTemplate(file)
       setTemplates(prev => [...prev, res])
       setTemplate(res.template_id)
-      setSheets(res.available_sheets?.length ? res.available_sheets : DEFAULT_SHEETS)
+      setSheets(res.available_sheets || [])
     } catch (e) {
       setError(e.message)
     }
@@ -221,6 +219,11 @@ export default function NewJobModal({ onClose, onCreated }) {
                   <span className="text-sm text-gray-700">{SHEET_LABELS[s]}</span>
                 </label>
               ))}
+              {selectedTemplate && availableSheets.length === 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
+                  This template does not contain any supported sheets. Supported sheets are 2, 3, 6, 7, 8, and 9.
+                </p>
+              )}
             </div>
           </div>
 

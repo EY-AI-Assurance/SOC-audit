@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.models.schemas import CreateJobRequest, CreatedJobsResponse, JobResponse, ReportSummary
-from app.routers.templates import get_template_path
+from app.routers.templates import get_template_meta, get_template_path
 from app.services.excel_writer import write_excel
 from app.services.extractor import extract
 from app.services.api_config_store import api_config_store
@@ -190,8 +190,8 @@ def create_job(req: CreateJobRequest, background_tasks: BackgroundTasks):
         job_state = {
             "job_id": job_id,
             "template_id": req.template_id,
-            "template_name": template_path.name,
-            "sheets": req.sheets,
+            "template_name": template_meta["name"],
+            "sheets": sorted(requested_sheets),
             "status": "processing",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "api_config": public_api_snapshot,
