@@ -3,10 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from app.models.extraction import TOCData
 from app.services.extractor import (
+    _collect_sheet8_candidate_section,
     _extract_sheet6_batches,
     _extract_sheet7_batches,
-    _extract_sheet8_batches,
     _extract_sheet9_batches,
     extract,
 )
@@ -17,6 +18,7 @@ from app.services.retrieval import (
     SearchTopicProfile,
     _contiguous_batches,
     load_search_profile,
+    load_search_profiles,
     tokenize,
 )
 from app.config import settings
@@ -264,16 +266,35 @@ def test_sheet9_batches_dedupe_overlap_items():
     assert len(result.csocs) == 1
 
 
-def test_sheet8_batches_dedupe_short_overlap_items():
-    item = {
-        "objective_and_page": "Access Page 40",
-        "description": "Users approve access requests."
+def test_sheet8_uses_contiguous_cuec_section_and_stops_before_next_section():
+    pages = {
+        1: "Table of Contents\nComplementary User Entity Controls .... 40",
+        2: "Customers are responsible for paying invoices on time.",
+        3: "Complementary User Entity Controls\nControl Objective 1",
+        4: "User entities should approve access requests.",
+        5: "User entities are responsible for reviewing access quarterly.",
+        6: "Complementary Subservice Organization Controls",
+        7: "Customers are responsible for unrelated contract administration.",
     }
-    llm = _SequenceLLM([{"cuecs": [item]}, {"cuecs": [item]}])
+    toc = TOCData(
+        system_name="Test System",
+        opinion_pages=[0, 0],
+        change_mgmt_pages=[0, 0],
+        access_mgmt_pages=[0, 0],
+        job_scheduling_pages=[0, 0],
+        subservice_pages=[0, 0],
+        cuec_pages=[0, 0],
+        csoc_pages=[0, 0],
+    )
 
-    result = _extract_sheet8_batches(llm, ["batch one", "batch two"])
+    section = _collect_sheet8_candidate_section(pages, toc, {}, {})
 
-    assert len(result.cuecs) == 1
+    assert "[PDF Page 3]" in section
+    assert "[PDF Page 4]" in section
+    assert "[PDF Page 5]" in section
+    assert "[PDF Page 2]" not in section
+    assert "[PDF Page 6]" not in section
+    assert "[PDF Page 7]" not in section
 
 
 def test_utf8_profile_loads_with_digest_and_invalid_profile_names_file(tmp_path: Path):
@@ -305,13 +326,16 @@ def test_all_shipped_search_profiles_are_valid():
     expected_topics = {
         "sheet6.json": {"change_mgmt", "access_mgmt", "job_scheduling"},
         "sheet7.json": {"subservice"},
-        "sheet8.json": {"cuec"},
         "sheet9.json": {"csoc"},
     }
 
     for filename, topics in expected_topics.items():
         loaded = load_search_profile(settings.search_terms_dir / filename)
         assert set(loaded.topics) == topics
+
+
+def test_sheet8_does_not_load_a_global_search_profile(tmp_path: Path):
+    assert load_search_profiles(tmp_path, {8}) == {}
 
 
 class _Sheet7And9LLM:

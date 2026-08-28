@@ -24,6 +24,33 @@ from app.services.retrieval import (
     normalize_text,
 )
 
+_SHEET8_START_PHRASES = [
+    "complementary user entity controls",
+    "customer responsibilities",
+    "user control considerations",
+    "user entity responsibilities",
+    "customer control considerations",
+]
+
+_SHEET8_STOP_PHRASES = [
+    "complementary subservice organization controls",
+    "complementary sub-service organization controls",
+    "subservice organization controls",
+    "sub-service organization controls",
+    "section iv - description",
+    "section iv – description",
+    "section v",
+    "other information",
+]
+
+_SHEET8_RESPONSIBILITY_PHRASES = [
+    "user entities should",
+    "user entities are responsible",
+    "customers are responsible",
+    "customer administrators are responsible",
+    "clients should",
+]
+
 _SHEET8_BULLET_PATTERN = r"\s*[•▪●◼■\uf06e]\s*"
 _SHEET8_CLEAN_CHUNK_SIZE = 12
 _SHEET8_STRUCTURAL_LABELS = {
@@ -208,6 +235,82 @@ def _format_retrieval_batches(
         _format_pages(pages, batch, pdf_to_report_page)
         for batch in retrieval.batches
     ]
+
+
+def _collect_sheet8_candidate_section(
+    pages: dict[int, str],
+    toc: TOCData,
+    report_to_pdf_page: dict[int, set[int]],
+    pdf_to_report_page: dict[int, int],
+) -> str:
+    """Locate the dedicated CUEC section without broad full-report retrieval."""
+    all_pages = set(pages)
+    toc_candidates = _pages_from_range(
+        toc.cuec_pages, all_pages, report_to_pdf_page
+    )
+    candidates: set[int] = set()
+    collecting = False
+    section_pages: set[int] = set()
+
+    def _is_sheet8_start_page(page_text: str) -> bool:
+        lowered_text = page_text.lower()
+        lines = [line.strip().lower() for line in page_text.splitlines()]
+        has_heading = any(line in _SHEET8_START_PHRASES for line in lines)
+        has_table_header = (
+            "complementary user entity controls" in lowered_text
+            and (
+                "control objective" in lowered_text
+                or "related control objective" in lowered_text
+            )
+            and any(
+                phrase in lowered_text
+                for phrase in _SHEET8_RESPONSIBILITY_PHRASES
+            )
+        )
+        return has_heading or has_table_header
+
+    for page_number in sorted(pages):
+        text = pages[page_number]
+        lowered = text.lower()
+        is_toc_page = (
+            page_number <= settings.toc_max_pages
+            and "table of contents" in lowered
+        )
+
+        if not collecting and not is_toc_page and _is_sheet8_start_page(text):
+            collecting = True
+
+        if collecting and page_number not in section_pages:
+            if section_pages and any(
+                phrase in lowered for phrase in _SHEET8_STOP_PHRASES
+            ):
+                break
+            section_pages.add(page_number)
+
+    if section_pages:
+        candidates.update(section_pages)
+    else:
+        candidates.update(toc_candidates)
+
+    if not section_pages:
+        for page_number, text in pages.items():
+            lowered = text.lower()
+            has_table_header = (
+                "complementary user entity controls" in lowered
+                and (
+                    "control objective" in lowered
+                    or "related control objective" in lowered
+                )
+            )
+            if has_table_header:
+                candidates.add(page_number)
+
+    candidate_pages = sorted(candidates)
+    print(
+        f"[EXTRACTOR] Sheet 8 dedicated candidate pages: {candidate_pages}",
+        flush=True,
+    )
+    return _format_pages(pages, candidate_pages, pdf_to_report_page)
 
 
 def _extract_sheet2(llm_client: LLMClient, cover_text: str, opinion_text: str) -> Sheet2Data:
@@ -758,13 +861,6 @@ def _clean_sheet8_cuecs(llm_client: LLMClient, cuecs: list[CUECItem]) -> list[CU
     return cleaned
 
 
-def _extract_sheet8_batches(llm_client: LLMClient, batches: list[str]) -> Sheet8Data:
-    cuecs: list[CUECItem] = []
-    for text in batches:
-        cuecs.extend(_extract_sheet8(llm_client, text).cuecs)
-    return Sheet8Data(cuecs=_dedupe_sheet8_cuecs(cuecs))
-
-
 def _extract_sheet9(llm_client: LLMClient, text: str) -> Sheet9Data:
     raw = llm_client.call_json(_prompt("sheet9_csoc.txt", section_text=text))
     raw_csocs = raw.get("csocs", []) if isinstance(raw, dict) else raw
@@ -817,7 +913,9 @@ def extract(
 
     pages = load_parsed(parsed_path)
     report_to_pdf_page, pdf_to_report_page = _build_page_number_maps(pages)
-    retrieval_sheet_numbers = set(sheets) & {6, 7, 8, 9}
+    # Sheet 8 intentionally uses its dedicated contiguous CUEC-section locator.
+    # Broad full-report retrieval produced unrelated customer-responsibility rows.
+    retrieval_sheet_numbers = set(sheets) & {6, 7, 9}
     search_profiles = load_search_profiles(
         settings.search_terms_dir,
         retrieval_sheet_numbers,
@@ -845,7 +943,6 @@ def extract(
             (6, "access_mgmt"): toc.access_mgmt_pages,
             (6, "job_scheduling"): toc.job_scheduling_pages,
             (7, "subservice"): toc.subservice_pages,
-            (8, "cuec"): toc.cuec_pages,
             (9, "csoc"): toc.csoc_pages,
         }
         for (sheet_number, topic), toc_range in retrieval_specs.items():
@@ -930,11 +1027,12 @@ def extract(
     if 8 in sheets:
         logger.info("Starting Sheet 8 extraction")
         _cb("Extracting CUECs (Sheet 8)", _STEP_PCT[8][0])
-        result.sheet8 = _extract_sheet8_batches(
+        result.sheet8 = _extract_sheet8(
             llm_client,
-            _format_retrieval_batches(
+            _collect_sheet8_candidate_section(
                 pages,
-                retrievals[(8, "cuec")],
+                toc,
+                report_to_pdf_page,
                 pdf_to_report_page,
             ),
         )

@@ -1,6 +1,6 @@
 """Page-level retrieval for SOC report evidence.
 
-The index is built once per report and shared by Sheet 6-9. Retrieval favors
+The index is built once per report and shared by Sheets 6, 7, and 9. Retrieval favors
 recall: TOC ranges, direct keyword matches, and every BM25 keyword query
 contribute to one union of pages. Scores are used only to select each query's
 Top K pages; they are never fused to discard pages recalled by another signal.
@@ -213,7 +213,7 @@ def load_search_profile(path: Path) -> LoadedSearchProfile:
 
 def load_search_profiles(directory: Path, sheet_numbers: set[int]) -> dict[int, LoadedSearchProfile]:
     profiles: dict[int, LoadedSearchProfile] = {}
-    for sheet_number in sorted(sheet_numbers & {6, 7, 8, 9}):
+    for sheet_number in sorted(sheet_numbers & {6, 7, 9}):
         path = directory / f"sheet{sheet_number}.json"
         profiles[sheet_number] = load_search_profile(path)
     return profiles

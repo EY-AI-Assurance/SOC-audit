@@ -129,9 +129,9 @@ http://localhost:5173
   locks an immutable snapshot of the active connection, so later switching or
   editing does not affect a running job.
 
-## Sheet 6-9 Search Terms
+## Sheet 6, 7 and 9 Search Terms
 
-Page retrieval for Sheets 6-9 is configured in `backend/app/search_terms/`.
+Page retrieval for Sheets 6, 7 and 9 is configured in `backend/app/search_terms/`.
 Each UTF-8 JSON file contains one `keywords` list for each search topic. The
 same keywords are used for both direct page matching and BM25 search. The files
 are validated and reloaded at the start of every analysis job, so changes apply
@@ -146,14 +146,13 @@ flowchart TD
 
     B --> D["合并两边找到的所有页面<br/>任一方法找到都会保留"]
     C --> D
-
     D --> E["去掉目录页和重复页<br/>补充前后相邻页"]
 
     E --> F["交给 AI 提取<br/>页面过多时分批，但不删除"]
 
     P["可调整的 Prompt<br/>决定提取什么、如何填写"] --> F
 
-    F --> G["填写 Sheet 6–9"]
+    F --> G["填写 Sheet 6、7、9"]
 ```
 
 TOC positioning and keyword search run in parallel. The system keeps the union
@@ -175,6 +174,12 @@ other.
 Leave `version` unchanged and edit only the `keywords` arrays. Invalid files
 fail the job with the filename and validation error instead of silently falling
 back to hard-coded terms.
+
+Sheet 8 uses a dedicated CUEC section locator: it follows the TOC when
+available, otherwise finds the CUEC heading/table and reads the continuous
+section until the next report section. It does not use broad full-report BM25
+retrieval, which prevents unrelated customer-responsibility text from being
+written into Sheet 8.
 
 ## Notes
 
