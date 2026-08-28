@@ -287,7 +287,7 @@ def test_sheet8_uses_contiguous_cuec_section_and_stops_before_next_section():
         3: "Complementary User Entity Controls\nControl Objective 1",
         4: "User entities should approve access requests.",
         5: "User entities are responsible for reviewing access quarterly.",
-        6: "Complementary Subservice Organization Controls",
+        6: "Complementary Subservice Organization Controls (CSOCs)",
         7: "Customers are responsible for unrelated contract administration.",
     }
     section = _collect_sheet8_candidate_section(pages, _sheet8_toc(), {}, {})
@@ -321,6 +321,25 @@ def test_sheet8_uses_toc_range_without_collecting_other_responsibility_pages():
     assert "[PDF Page 5]" in section
     assert "[PDF Page 2]" not in section
     assert "[PDF Page 6]" not in section
+
+
+def test_sheet8_does_not_treat_separate_narrative_phrases_as_a_table_header():
+    pages = {
+        1: "Table of Contents",
+        2: (
+            "The report discusses control objectives in Section III.\n"
+            "Supplemental information describes User Entity Responsibilities."
+        ),
+        3: "Complementary User Entity Controls\nIntroductory text.",
+        4: "Complementary User Entity Controls Related Control Objectives\nCustomer row",
+        5: "Other Information",
+    }
+
+    section = _collect_sheet8_candidate_section(pages, _sheet8_toc(), {}, {})
+
+    assert "[PDF Page 2]" not in section
+    assert "[PDF Page 3]" in section
+    assert "[PDF Page 4]" in section
 
 
 def test_sheet8_finds_numbered_wrapped_heading_without_toc():

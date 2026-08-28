@@ -341,7 +341,14 @@ def _has_sheet8_heading(text: str, phrases: list[str]) -> bool:
     }
     for candidate in _sheet8_heading_candidates(text):
         candidate_raw = normalize_text(candidate).strip(" .:;|\t-–—")
-        if candidate_raw in phrase_raw or _sheet8_heading_key(candidate) in phrase_keys:
+        candidate_key = _sheet8_heading_key(candidate)
+        if candidate_raw in phrase_raw or candidate_key in phrase_keys:
+            return True
+        if any(
+            candidate_key == f"{phrase_key} {suffix}"
+            for phrase_key in phrase_keys
+            for suffix in ("cuec", "cuecs", "csoc", "csocs")
+        ):
             return True
     return False
 
@@ -372,28 +379,31 @@ def _sheet8_list_line_count(text: str) -> int:
 
 
 def _is_sheet8_table_header_page(text: str) -> bool:
-    normalized = normalize_text(text)
-    has_objective_header = (
-        "control objective" in normalized
-        or "related control objective" in normalized
-        or "控制目标" in normalized
-        or "相关控制目标" in normalized
+    objective_headers = (
+        "control objective",
+        "related control objective",
+        "控制目标",
+        "相关控制目标",
     )
-    has_cuec_header = any(
-        phrase in normalized
-        for phrase in (
-            "complementary user entity control",
-            "customer responsibilities",
-            "user entity responsibilities",
-            "customer control considerations",
-            "user control considerations",
-            "补充性用户实体控制",
-            "补偿性用户实体控制",
-            "客户责任",
-            "用户实体责任",
-        )
+    cuec_headers = (
+        "complementary user entity control",
+        "customer responsibilities",
+        "user entity responsibilities",
+        "customer control considerations",
+        "user control considerations",
+        "补充性用户实体控制",
+        "补偿性用户实体控制",
+        "客户责任",
+        "用户实体责任",
     )
-    return has_objective_header and has_cuec_header
+    for line in text.splitlines():
+        normalized_line = normalize_text(line)
+        if (
+            any(header in normalized_line for header in objective_headers)
+            and any(header in normalized_line for header in cuec_headers)
+        ):
+            return True
+    return False
 
 
 def _is_sheet8_dense_responsibility_list(text: str) -> bool:
