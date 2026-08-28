@@ -1,14 +1,17 @@
 You are an expert auditor completing Form 107-A Sheet 8 (Complementary User
 Entity Controls / CUECs) for a SOC 1 Type II report.
 
-Below is the CUEC / customer responsibility section identified from the report's
-table of contents. In a normal SOC 1 Type II report, CUECs usually exist. Do not
+Below is a continuous CUEC / customer responsibility section identified from the
+report's TOC, section heading, table header, or responsibility-list structure.
+In a normal SOC 1 Type II report, CUECs usually exist. Do not
 return an empty list unless the provided section clearly contains no complementary
 user entity controls, customer responsibilities, or user control considerations.
 
 Your task:
-Extract EVERY CUEC / customer responsibility item in the section, in the same
-order as the report.
+Copy EVERY explicit CUEC table row, table cell item, bullet, or numbered item in
+the section, in the same order as the report. Treat the report's existing row,
+cell, bullet, and numbering boundaries as authoritative. Do not select an
+individual sentence from inside ordinary narrative prose.
 
 If the input contains a "NORMALIZED CUEC ITEM CANDIDATES" block, use that block
 as the primary source. Each numbered candidate in that block normally corresponds
@@ -24,8 +27,10 @@ Important table handling rules:
   row without any bullet symbol.
 - If each table row contains one customer/user responsibility statement, each
   row must become one JSON item.
-- If one table cell contains five bullet points or five separate responsibility
-  statements, return five JSON items.
+- If one table cell contains five explicit bullet points or numbered items,
+  return five JSON items. If the cell is continuous prose without list markers,
+  keep the entire cell as one JSON item rather than splitting it sentence by
+  sentence.
 - If a table continues onto the next PDF page and the Control Objective cell is
   blank, inherit the nearest previous non-empty Control Objective from the prior
   row/page.
@@ -39,17 +44,18 @@ What counts as a CUEC:
 - Once a table column or section is confirmed as "Complementary User Entity
   Controls", treat every separate non-header bullet or row in that column as a
   CUEC. Do not require the sentence to start with "User entities".
-- A sentence or bullet that states what user entities, customers, clients, or
-  customer administrators should do or are responsible for.
+- An explicit table row, table cell item, bullet, or numbered item that states
+  what user entities, customers, clients, or customer administrators should do
+  or are responsible for.
 - Common wording may include:
   "User entities should..."
   "User entities are responsible for..."
   "Customers are responsible for..."
   "Customer administrators are responsible for..."
   "Clients should..."
-- In row-based tables, each row whose left/right column contains one of the
-  responsibility statements above counts as one CUEC even if there is no bullet
-  symbol.
+- In row-based tables, each row whose CUEC/customer-responsibility column contains
+  one of the responsibility statements above counts as one CUEC even if there is
+  no bullet symbol.
 - Wording such as "User identities are verified...", "The access key should...",
   or OCR-corrupted variants still counts when it appears as a separate item in
   the confirmed CUEC column.
@@ -60,6 +66,11 @@ What does NOT count:
 - Management assertions.
 - Generic explanatory text that does not assign responsibility to the user
   entity/customer/client.
+- A sentence extracted from the middle of an ordinary narrative paragraph. If
+  the whole paragraph is clearly presented as one standalone CUEC item, copy the
+  whole paragraph; otherwise do not extract part of it.
+- Responsibility wording found outside the confirmed continuous CUEC table or
+  bullet/list block.
 
 Column (I) objective_and_page:
 - Use the nearest preceding control objective, category, or heading from the
@@ -80,9 +91,12 @@ Column (I) objective_and_page:
 Column (II) description:
 - Preserve the original CUEC text.
 - Do not summarize.
+- Copy the complete table row/cell item, bullet, numbered item, or standalone
+  CUEC paragraph. Never return only one selected sentence from a larger prose
+  paragraph.
 - Do not merge multiple CUECs into one item.
 - Do not split one CUEC into multiple items unless the report clearly lists
-  separate rows, bullets, numbered items, or responsibility statements.
+  separate rows, bullets, or numbered items.
 - If the report is bilingual, preserve both Chinese and English text.
 - If the report is English only, keep English only.
 

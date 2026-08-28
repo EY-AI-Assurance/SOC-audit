@@ -30,6 +30,13 @@ _SHEET8_START_PHRASES = [
     "user control considerations",
     "user entity responsibilities",
     "customer control considerations",
+    "cuec",
+    "cuecs",
+    "补充性用户实体控制",
+    "补偿性用户实体控制",
+    "用户实体控制",
+    "客户责任",
+    "用户实体责任",
 ]
 
 _SHEET8_STOP_PHRASES = [
@@ -41,17 +48,80 @@ _SHEET8_STOP_PHRASES = [
     "section iv – description",
     "section v",
     "other information",
+    "补充性子服务机构控制",
+    "补偿性子服务机构控制",
+    "其他信息",
 ]
 
-_SHEET8_RESPONSIBILITY_PHRASES = [
-    "user entities should",
-    "user entities are responsible",
-    "customers are responsible",
-    "customer administrators are responsible",
-    "clients should",
+_SHEET8_RESPONSIBILITY_SUBJECTS = [
+    "user entity",
+    "user entities",
+    "customer",
+    "customers",
+    "client",
+    "clients",
+    "customer administrator",
+    "customer administrators",
+    "用户实体",
+    "客户",
+    "客户管理员",
 ]
 
-_SHEET8_BULLET_PATTERN = r"\s*[•▪●◼■\uf06e]\s*"
+_SHEET8_RESPONSIBILITY_ACTIONS = [
+    "should",
+    "must",
+    "responsible",
+    "expected to",
+    "required to",
+    "ensure",
+    "implement",
+    "maintain",
+    "establish",
+    "review",
+    "monitor",
+    "approve",
+    "configure",
+    "应当",
+    "应该",
+    "必须",
+    "负责",
+    "确保",
+    "实施",
+    "维护",
+    "建立",
+    "审查",
+    "监控",
+    "批准",
+    "配置",
+]
+
+_SHEET8_BULLET_PATTERN = (
+    r"(?:"
+    r"\s*[•▪●◼■\uf06e]\s*|"
+    r"(?:^|\s+)(?:\(?\d{1,3}[.)]|[A-Za-z][.)])\s+|"
+    r"(?:^|\s+)[（(]?[一二三四五六七八九十]+[、.)）]\s*"
+    r")"
+)
+_SHEET8_LIST_LINE_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"[•▪●◼■\uf06e*-]\s*|"
+    r"\(?\d{1,3}[.)]\s+|"
+    r"[A-Za-z][.)]\s+|"
+    r"[（(]?[一二三四五六七八九十]+[、.)）]\s*"
+    r")"
+)
+_SHEET8_HEADING_PREFIX_PATTERN = re.compile(
+    r"^(?:(?:section|chapter|part)\s+)?"
+    r"(?:[ivxlcdm]+|\d+(?:\.\d+)*)"
+    r"(?:\s*[.):\-–—]\s*|\s+)",
+    flags=re.IGNORECASE,
+)
+_SHEET8_CHINESE_HEADING_PREFIX_PATTERN = re.compile(
+    r"^(?:"
+    r"[（(]?[一二三四五六七八九十百]+[、.)）]\s*|"
+    r"第[一二三四五六七八九十百\d]+(?:章|节|部分)\s*"
+    r")"
+)
 _SHEET8_CLEAN_CHUNK_SIZE = 12
 _SHEET8_STRUCTURAL_LABELS = {
     "complementary user entity controls",
@@ -237,6 +307,119 @@ def _format_retrieval_batches(
     ]
 
 
+def _sheet8_heading_key(value: str) -> str:
+    normalized = normalize_text(value).strip(" .:;|\t-–—")
+    normalized = _SHEET8_HEADING_PREFIX_PATTERN.sub("", normalized, count=1)
+    normalized = _SHEET8_CHINESE_HEADING_PREFIX_PATTERN.sub("", normalized, count=1)
+    return re.sub(
+        r"[^a-z0-9\u3400-\u4dbf\u4e00-\u9fff]+",
+        " ",
+        normalized,
+    ).strip()
+
+
+def _sheet8_heading_candidates(text: str) -> list[str]:
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not re.match(r"^\[(?:Page|PDF Page)\s+\d+", line.strip())
+    ]
+    candidates = list(lines)
+    for width in (2, 3):
+        candidates.extend(
+            " ".join(lines[index:index + width])
+            for index in range(len(lines) - width + 1)
+        )
+    return candidates
+
+
+def _has_sheet8_heading(text: str, phrases: list[str]) -> bool:
+    phrase_keys = {_sheet8_heading_key(phrase) for phrase in phrases}
+    phrase_raw = {
+        normalize_text(phrase).strip(" .:;|\t-–—")
+        for phrase in phrases
+    }
+    for candidate in _sheet8_heading_candidates(text):
+        candidate_raw = normalize_text(candidate).strip(" .:;|\t-–—")
+        if candidate_raw in phrase_raw or _sheet8_heading_key(candidate) in phrase_keys:
+            return True
+    return False
+
+
+def _sheet8_table_row_count(text: str) -> int:
+    return sum(
+        1
+        for line in text.splitlines()
+        if line.strip().startswith("|")
+        and line.strip().count("|") >= 2
+        and not re.fullmatch(r"[|:\-\s]+", line.strip())
+    )
+
+
+def _is_sheet8_responsibility_line(line: str) -> bool:
+    normalized = normalize_text(line)
+    return (
+        any(subject in normalized for subject in _SHEET8_RESPONSIBILITY_SUBJECTS)
+        and any(action in normalized for action in _SHEET8_RESPONSIBILITY_ACTIONS)
+    )
+
+
+def _sheet8_list_line_count(text: str) -> int:
+    return sum(
+        1 for line in text.splitlines()
+        if _SHEET8_LIST_LINE_PATTERN.match(line)
+    )
+
+
+def _is_sheet8_table_header_page(text: str) -> bool:
+    normalized = normalize_text(text)
+    has_objective_header = (
+        "control objective" in normalized
+        or "related control objective" in normalized
+        or "控制目标" in normalized
+        or "相关控制目标" in normalized
+    )
+    has_cuec_header = any(
+        phrase in normalized
+        for phrase in (
+            "complementary user entity control",
+            "customer responsibilities",
+            "user entity responsibilities",
+            "customer control considerations",
+            "user control considerations",
+            "补充性用户实体控制",
+            "补偿性用户实体控制",
+            "客户责任",
+            "用户实体责任",
+        )
+    )
+    return has_objective_header and has_cuec_header
+
+
+def _is_sheet8_dense_responsibility_list(text: str) -> bool:
+    responsibility_items = sum(
+        1
+        for line in text.splitlines()
+        if _SHEET8_LIST_LINE_PATTERN.match(line)
+        and _is_sheet8_responsibility_line(line)
+    )
+    return responsibility_items >= 2
+
+
+def _is_sheet8_continuation_page(text: str) -> bool:
+    if _has_sheet8_heading(text, _SHEET8_START_PHRASES):
+        return True
+    if _is_sheet8_table_header_page(text):
+        return True
+    if _is_sheet8_dense_responsibility_list(text):
+        return True
+    if _sheet8_table_row_count(text) >= 2:
+        return True
+    if any(_is_sheet8_responsibility_line(line) for line in text.splitlines()):
+        return True
+    return _sheet8_list_line_count(text) >= 2
+
+
 def _collect_sheet8_candidate_section(
     pages: dict[int, str],
     toc: TOCData,
@@ -248,66 +431,63 @@ def _collect_sheet8_candidate_section(
     toc_candidates = _pages_from_range(
         toc.cuec_pages, all_pages, report_to_pdf_page
     )
-    candidates: set[int] = set()
-    collecting = False
-    section_pages: set[int] = set()
-
-    def _is_sheet8_start_page(page_text: str) -> bool:
-        lowered_text = page_text.lower()
-        lines = [line.strip().lower() for line in page_text.splitlines()]
-        has_heading = any(line in _SHEET8_START_PHRASES for line in lines)
-        has_table_header = (
-            "complementary user entity controls" in lowered_text
-            and (
-                "control objective" in lowered_text
-                or "related control objective" in lowered_text
-            )
-            and any(
-                phrase in lowered_text
-                for phrase in _SHEET8_RESPONSIBILITY_PHRASES
-            )
+    if toc_candidates:
+        candidate_pages = sorted(toc_candidates)
+        print(
+            "[EXTRACTOR] Sheet 8 dedicated candidate pages: "
+            f"source=toc pages={candidate_pages}",
+            flush=True,
         )
-        return has_heading or has_table_header
+        return _format_pages(pages, candidate_pages, pdf_to_report_page)
 
+    start_page: int | None = None
+    start_reason = ""
     for page_number in sorted(pages):
         text = pages[page_number]
-        lowered = text.lower()
+        normalized = normalize_text(text)
         is_toc_page = (
             page_number <= settings.toc_max_pages
-            and "table of contents" in lowered
+            and ("table of contents" in normalized or "目录" in normalized)
         )
+        if is_toc_page:
+            continue
+        if _has_sheet8_heading(text, _SHEET8_START_PHRASES):
+            start_page = page_number
+            start_reason = "heading"
+            break
+        if _is_sheet8_table_header_page(text):
+            start_page = page_number
+            start_reason = "table_header"
+            break
+        if _is_sheet8_dense_responsibility_list(text):
+            start_page = page_number
+            start_reason = "dense_responsibility_list"
+            break
 
-        if not collecting and not is_toc_page and _is_sheet8_start_page(text):
-            collecting = True
-
-        if collecting and page_number not in section_pages:
-            if section_pages and any(
-                phrase in lowered for phrase in _SHEET8_STOP_PHRASES
+    candidate_pages: list[int] = []
+    if start_page is not None:
+        pending_weak_pages: list[int] = []
+        for page_number in sorted(page for page in pages if page >= start_page):
+            text = pages[page_number]
+            if (
+                candidate_pages
+                and _has_sheet8_heading(text, _SHEET8_STOP_PHRASES)
             ):
                 break
-            section_pages.add(page_number)
 
-    if section_pages:
-        candidates.update(section_pages)
-    else:
-        candidates.update(toc_candidates)
+            if page_number == start_page or _is_sheet8_continuation_page(text):
+                candidate_pages.extend(pending_weak_pages)
+                pending_weak_pages = []
+                candidate_pages.append(page_number)
+                continue
 
-    if not section_pages:
-        for page_number, text in pages.items():
-            lowered = text.lower()
-            has_table_header = (
-                "complementary user entity controls" in lowered
-                and (
-                    "control objective" in lowered
-                    or "related control objective" in lowered
-                )
-            )
-            if has_table_header:
-                candidates.add(page_number)
+            pending_weak_pages.append(page_number)
+            if len(pending_weak_pages) >= 2:
+                break
 
-    candidate_pages = sorted(candidates)
     print(
-        f"[EXTRACTOR] Sheet 8 dedicated candidate pages: {candidate_pages}",
+        "[EXTRACTOR] Sheet 8 dedicated candidate pages: "
+        f"source={start_reason or 'not_found'} pages={candidate_pages}",
         flush=True,
     )
     return _format_pages(pages, candidate_pages, pdf_to_report_page)

@@ -9,6 +9,7 @@ from app.services.extractor import (
     _extract_sheet6_batches,
     _extract_sheet7_batches,
     _extract_sheet9_batches,
+    _prepare_sheet8_text,
     extract,
 )
 from app.services.pdf_parser import save_parsed
@@ -266,6 +267,19 @@ def test_sheet9_batches_dedupe_overlap_items():
     assert len(result.csocs) == 1
 
 
+def _sheet8_toc(cuec_pages: list[int] | None = None) -> TOCData:
+    return TOCData(
+        system_name="Test System",
+        opinion_pages=[0, 0],
+        change_mgmt_pages=[0, 0],
+        access_mgmt_pages=[0, 0],
+        job_scheduling_pages=[0, 0],
+        subservice_pages=[0, 0],
+        cuec_pages=cuec_pages or [0, 0],
+        csoc_pages=[0, 0],
+    )
+
+
 def test_sheet8_uses_contiguous_cuec_section_and_stops_before_next_section():
     pages = {
         1: "Table of Contents\nComplementary User Entity Controls .... 40",
@@ -276,18 +290,7 @@ def test_sheet8_uses_contiguous_cuec_section_and_stops_before_next_section():
         6: "Complementary Subservice Organization Controls",
         7: "Customers are responsible for unrelated contract administration.",
     }
-    toc = TOCData(
-        system_name="Test System",
-        opinion_pages=[0, 0],
-        change_mgmt_pages=[0, 0],
-        access_mgmt_pages=[0, 0],
-        job_scheduling_pages=[0, 0],
-        subservice_pages=[0, 0],
-        cuec_pages=[0, 0],
-        csoc_pages=[0, 0],
-    )
-
-    section = _collect_sheet8_candidate_section(pages, toc, {}, {})
+    section = _collect_sheet8_candidate_section(pages, _sheet8_toc(), {}, {})
 
     assert "[PDF Page 3]" in section
     assert "[PDF Page 4]" in section
@@ -295,6 +298,110 @@ def test_sheet8_uses_contiguous_cuec_section_and_stops_before_next_section():
     assert "[PDF Page 2]" not in section
     assert "[PDF Page 6]" not in section
     assert "[PDF Page 7]" not in section
+
+
+def test_sheet8_uses_toc_range_without_collecting_other_responsibility_pages():
+    pages = {
+        1: "Table of Contents",
+        2: "Customers are responsible for ordinary contract administration.",
+        3: "Unrelated narrative.",
+        4: "Control Objective | Customer Responsibilities",
+        5: "User entities should review access.",
+        6: "Other Information",
+    }
+
+    section = _collect_sheet8_candidate_section(
+        pages,
+        _sheet8_toc([4, 5]),
+        {},
+        {},
+    )
+
+    assert "[PDF Page 4]" in section
+    assert "[PDF Page 5]" in section
+    assert "[PDF Page 2]" not in section
+    assert "[PDF Page 6]" not in section
+
+
+def test_sheet8_finds_numbered_wrapped_heading_without_toc():
+    pages = {
+        1: "Table of Contents",
+        2: "Section V.\nComplementary\nUser Entity Controls",
+        3: "• User entities should approve access.\n• Customers must review accounts.",
+        4: "Section VI. Other Information",
+        5: "• Unrelated bullet one\n• Unrelated bullet two",
+    }
+
+    section = _collect_sheet8_candidate_section(pages, _sheet8_toc(), {}, {})
+
+    assert "[PDF Page 2]" in section
+    assert "[PDF Page 3]" in section
+    assert "[PDF Page 4]" not in section
+    assert "[PDF Page 5]" not in section
+
+
+def test_sheet8_finds_dense_responsibility_bullet_block_without_heading_or_toc():
+    pages = {
+        1: "Table of Contents",
+        2: "Customers are responsible for paying invoices on time.",
+        3: (
+            "• User entities should approve privileged access.\n"
+            "• Customers are responsible for reviewing active accounts."
+        ),
+        4: "• Maintain backup contacts.\n• Review incident notifications.",
+        5: "Unrelated narrative after the responsibility list.",
+        6: "Additional unrelated narrative.",
+    }
+
+    section = _collect_sheet8_candidate_section(pages, _sheet8_toc(), {}, {})
+
+    assert "[PDF Page 2]" not in section
+    assert "[PDF Page 3]" in section
+    assert "[PDF Page 4]" in section
+    assert "[PDF Page 5]" not in section
+    assert "[PDF Page 6]" not in section
+
+
+def test_sheet8_finds_numbered_chinese_heading_and_responsibility_block():
+    pages = {
+        1: "目录",
+        2: "五、补充性用户实体控制",
+        3: "• 用户实体应当审批访问权限。\n• 客户必须定期审查账户。",
+        4: "六、其他信息",
+        5: "无关内容",
+    }
+
+    section = _collect_sheet8_candidate_section(pages, _sheet8_toc(), {}, {})
+
+    assert "[PDF Page 2]" in section
+    assert "[PDF Page 3]" in section
+    assert "[PDF Page 4]" not in section
+    assert "[PDF Page 5]" not in section
+
+
+def test_sheet8_prompt_forbids_extracting_one_sentence_from_narrative():
+    prompt = (settings.prompts_dir / "sheet8_cuec.txt").read_text(encoding="utf-8")
+    normalized_prompt = " ".join(prompt.split())
+
+    assert "Do not select an individual sentence from inside ordinary narrative prose" in normalized_prompt
+    assert "keep the entire cell as one JSON item" in normalized_prompt
+
+
+def test_sheet8_table_parser_splits_explicit_numbered_items_not_prose_sentences():
+    text = (
+        "[PDF Page 10 / Report Page 8]\n"
+        "| Control Objective | Complementary User Entity Controls |\n"
+        "| Access Management | 1. User entities should approve access. "
+        "2. Customers must review active accounts. |"
+    )
+
+    _prepared, cuecs = _prepare_sheet8_text(text)
+
+    assert [item.description for item in cuecs] == [
+        "User entities should approve access.",
+        "Customers must review active accounts.",
+    ]
+    assert all(item.objective_and_page == "Access Management Page 8" for item in cuecs)
 
 
 def test_utf8_profile_loads_with_digest_and_invalid_profile_names_file(tmp_path: Path):

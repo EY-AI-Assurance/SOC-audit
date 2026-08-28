@@ -175,11 +175,13 @@ Leave `version` unchanged and edit only the `keywords` arrays. Invalid files
 fail the job with the filename and validation error instead of silently falling
 back to hard-coded terms.
 
-Sheet 8 uses a dedicated CUEC section locator: it follows the TOC when
-available, otherwise finds the CUEC heading/table and reads the continuous
-section until the next report section. It does not use broad full-report BM25
-retrieval, which prevents unrelated customer-responsibility text from being
-written into Sheet 8.
+Sheet 8 uses a dedicated CUEC block locator. It follows the TOC when available;
+otherwise it recognizes normalized headings (including numbered or line-wrapped
+titles), CUEC/customer-responsibility table headers, or a dense block of explicit
+responsibility bullets. It then reads the continuous table/list block instead of
+using broad full-report BM25 retrieval. Extraction preserves each complete table
+row, cell item, bullet, numbered item, or standalone CUEC paragraph and does not
+select individual sentences from ordinary narrative prose.
 
 ## Notes
 
