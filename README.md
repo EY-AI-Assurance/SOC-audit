@@ -162,9 +162,30 @@ Build a one-directory executable with a visible console first:
 
 The debug executable depends on the other files in `dist\SOC-Audit\` and cannot be distributed by itself.
 
-### Release build
+### Folder release (recommended)
 
-After the debug build passes:
+Build the faster one-directory application without a console window and create
+the delivery ZIP:
+
+```powershell
+.\build_windows.ps1 -FolderBuild
+```
+
+The outputs are:
+
+```text
+dist\SOC-Audit\SOC-Audit.exe
+dist\SOC-Audit-Windows-x64.zip
+```
+
+Send `SOC-Audit-Windows-x64.zip` to users. They must fully extract the ZIP and
+launch `SOC-Audit.exe` from inside the extracted `SOC-Audit` folder. The EXE
+depends on the adjacent `_internal` directory and must not be distributed or
+moved by itself.
+
+### Single-file release
+
+When a portable single EXE is strictly required:
 
 ```powershell
 .\build_windows.ps1
@@ -181,6 +202,11 @@ The single distributable file is:
 ```text
 dist\SOC-Audit.exe
 ```
+
+The single-file build is slower to start because PyInstaller extracts its
+bundled dependencies on every launch. Corporate endpoint protection may scan
+those extracted files and make startup substantially slower than the folder
+release.
 
 The React build and PyInstaller work files are created under the Windows `%TEMP%` directory instead of the repository. This avoids common OneDrive or antivirus locks on `frontend\node_modules` and `build\SOC-Audit\localpycs`. The build script stops on a non-zero pip, npm, or PyInstaller exit code and verifies the expected executable before reporting success.
 

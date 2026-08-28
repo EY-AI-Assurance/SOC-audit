@@ -1,9 +1,14 @@
 param(
-    [switch]$DebugBuild
+    [switch]$DebugBuild,
+    [switch]$FolderBuild
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+if ($DebugBuild -and $FolderBuild) {
+    throw "Choose either -DebugBuild or -FolderBuild, not both."
+}
 
 function Assert-NativeSuccess {
     param(
@@ -22,9 +27,11 @@ if (-not (Test-Path "backend/.env")) {
 
 Write-Warning "The local backend/.env file, including its API credentials, will be embedded in the executable. PyInstaller packaging does not encrypt secrets."
 
-$bundleMode = if ($DebugBuild) { "--onedir" } else { "--onefile" }
+$directoryBuild = $DebugBuild -or $FolderBuild
+$bundleMode = if ($directoryBuild) { "--onedir" } else { "--onefile" }
 $windowMode = if ($DebugBuild) { "--console" } else { "--windowed" }
 $distPath = Join-Path $PSScriptRoot "dist"
+$deliveryZipPath = Join-Path $distPath "SOC-Audit-Windows-x64.zip"
 $backendPath = Join-Path $PSScriptRoot "backend"
 $desktopEntryPath = Join-Path $PSScriptRoot "desktop.py"
 $promptsPath = Join-Path $backendPath "app\prompts"
@@ -35,12 +42,12 @@ $frontendSourcePath = Join-Path $PSScriptRoot "frontend"
 $frontendWorkPath = Join-Path $tempBuildRoot "frontend"
 $frontendDistPath = Join-Path $frontendWorkPath "dist"
 $pyinstallerWorkPath = Join-Path $tempBuildRoot "pyinstaller"
-$artifactPath = if ($DebugBuild) {
+$artifactPath = if ($directoryBuild) {
     Join-Path $distPath "SOC-Audit\SOC-Audit.exe"
 } else {
     Join-Path $distPath "SOC-Audit.exe"
 }
-$artifactTarget = if ($DebugBuild) {
+$artifactTarget = if ($directoryBuild) {
     Join-Path $distPath "SOC-Audit"
 } else {
     $artifactPath
@@ -122,10 +129,21 @@ try {
         throw "PyInstaller reported success, but the expected output was not found at '$artifactPath'."
     }
 
-    if ($DebugBuild) {
+    if ($FolderBuild) {
+        if (Test-Path $deliveryZipPath) {
+            Remove-Item $deliveryZipPath -Force
+        }
+        Compress-Archive -LiteralPath $artifactTarget -DestinationPath $deliveryZipPath -CompressionLevel Optimal
+        if (-not (Test-Path $deliveryZipPath -PathType Leaf)) {
+            throw "The folder build succeeded, but the delivery ZIP was not created at '$deliveryZipPath'."
+        }
+        Write-Host "Folder release created at $artifactPath"
+        Write-Host "Delivery ZIP created at $deliveryZipPath"
+        Write-Warning "Distribute the ZIP, not SOC-Audit.exe by itself. Users must fully extract it before launching the app."
+    } elseif ($DebugBuild) {
         Write-Host "Debug build created at $artifactPath"
     } else {
-        Write-Host "Release build created at $artifactPath"
+        Write-Host "Single-file release created at $artifactPath"
     }
 } finally {
     if (Test-Path $tempBuildRoot) {
