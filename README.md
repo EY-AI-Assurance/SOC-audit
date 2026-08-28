@@ -175,13 +175,11 @@ Leave `version` unchanged and edit only the `keywords` arrays. Invalid files
 fail the job with the filename and validation error instead of silently falling
 back to hard-coded terms.
 
-Sheet 8 uses a dedicated CUEC block locator. It follows the TOC when available;
-otherwise it recognizes normalized headings (including numbered or line-wrapped
-titles), CUEC/customer-responsibility table headers, or a dense block of explicit
-responsibility bullets. It then reads the continuous table/list block instead of
-using broad full-report BM25 retrieval. Extraction preserves each complete table
-row, cell item, bullet, numbered item, or standalone CUEC paragraph and does not
-select individual sentences from ordinary narrative prose.
+Sheet 8 deliberately retains the dedicated CUEC section logic used before commit
+`9ef0a14`. It scans for the original exact CUEC/customer-responsibility headings
+or table signature, reads consecutive pages until the next known section, and
+falls back to the TOC range if no section start is found. Sheet 8 does not use
+BM25; Sheets 6, 7, and 9 continue to use the shared full-report BM25 index.
 
 ## Notes
 
