@@ -1,4 +1,9 @@
 -r backend/requirements.txt
 
-pyinstaller>=6.0
-pywebview>=5.0
+# Keep major versions stable. Update and re-test deliberately before allowing a
+# new major release into the Windows build.
+pyinstaller>=6.0,<7
+pywebview>=5.0,<7
+# Required by pywebview's Windows Edge WebView2 renderer and collected by the
+# explicit `clr` hidden import in build_windows.ps1.
+pythonnet>=3.0,<4
