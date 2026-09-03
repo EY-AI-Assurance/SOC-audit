@@ -5,9 +5,9 @@ FastAPI + React application for parsing SOC 1 reports and filling EY Form 107-A 
 The project supports two modes:
 
 - Development: Vite and FastAPI run separately.
-- Windows desktop: React, FastAPI, prompts, search terms, Python dependencies, and the legacy `.env` API configuration are bundled into `SOC-Audit.exe`.
+- Windows desktop: React, FastAPI, prompts, search terms, and Python dependencies are packaged with `SOC-Audit.exe`. API credentials are configured after installation and remain encrypted on the local computer.
 
-The Windows desktop build still needs network/VPN access to the configured API. Bundling an API key inside an executable does not encrypt the embedded key; use an authenticated company API gateway for broad production distribution.
+The Windows desktop build still needs network/VPN access to the configured API. Never bundle an API key inside the executable; configure it from the app's **APIs** page after first launch.
 
 ## Development setup
 
@@ -142,14 +142,7 @@ PyInstaller must run on Windows to produce the Windows executable. Use Windows 1
 - Microsoft Edge WebView2 Runtime
 - Git
 
-Clone or update the repository and switch to `exe`. Activate a Python 3.12 environment, then create the local API configuration:
-
-```powershell
-Copy-Item backend\.env.example backend\.env
-notepad backend\.env
-```
-
-The embedded legacy configuration is imported into the encrypted API Library on first launch.
+Clone or update the repository and switch to `exe`. Activate a Python 3.12 environment. No API key is needed at build time; configure it from the packaged app's **APIs** page.
 
 ### Debug build
 
@@ -162,13 +155,13 @@ Build a one-directory executable with a visible console first:
 
 The debug executable depends on the other files in `dist\SOC-Audit\` and cannot be distributed by itself.
 
-### Folder release (recommended)
+### Folder release (default and recommended)
 
 Build the faster one-directory application without a console window and create
 the delivery ZIP:
 
 ```powershell
-.\build_windows.ps1 -FolderBuild
+.\build_windows.ps1
 ```
 
 The outputs are:
@@ -188,7 +181,7 @@ moved by itself.
 When a portable single EXE is strictly required:
 
 ```powershell
-.\build_windows.ps1
+.\build_windows.ps1 -SingleFile
 ```
 
 If PowerShell blocks the script:
@@ -206,11 +199,11 @@ dist\SOC-Audit.exe
 The single-file build is slower to start because PyInstaller extracts its
 bundled dependencies on every launch. Corporate endpoint protection may scan
 those extracted files and make startup substantially slower than the folder
-release.
+release. Use this option only after the folder release has been tested.
 
 The React build and PyInstaller work files are created under the Windows `%TEMP%` directory instead of the repository. This avoids common OneDrive or antivirus locks on `frontend\node_modules` and `build\SOC-Audit\localpycs`. The build script stops on a non-zero pip, npm, or PyInstaller exit code and verifies the expected executable before reporting success.
 
-Users do not need Python or Node.js. They need WebView2 Runtime and network/VPN access to the configured API.
+Users do not need Python or Node.js. They need the Microsoft Edge WebView2 Runtime and network/VPN access to the configured API. The packaged app requires WebView2 rather than falling back to the legacy Internet Explorer renderer.
 
 ## Desktop storage and logs
 
