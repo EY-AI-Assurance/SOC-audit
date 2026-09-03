@@ -1,13 +1,14 @@
 param(
     [switch]$DebugBuild,
-    [switch]$FolderBuild
+    [switch]$FolderBuild,
+    [switch]$SingleFile
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-if ($DebugBuild -and $FolderBuild) {
-    throw "Choose either -DebugBuild or -FolderBuild, not both."
+if (($DebugBuild -and $FolderBuild) -or ($DebugBuild -and $SingleFile) -or ($FolderBuild -and $SingleFile)) {
+    throw "Choose only one of -DebugBuild, -FolderBuild, or -SingleFile."
 }
 
 function Assert-NativeSuccess {
@@ -21,13 +22,9 @@ function Assert-NativeSuccess {
     }
 }
 
-if (-not (Test-Path "backend/.env")) {
-    throw "backend/.env is missing. Copy backend/.env.example to backend/.env and add the API configuration before building."
-}
-
-Write-Warning "The local backend/.env file, including its API credentials, will be embedded in the executable. PyInstaller packaging does not encrypt secrets."
-
-$directoryBuild = $DebugBuild -or $FolderBuild
+# The default is a faster, more reliable one-directory build. Use -SingleFile
+# only when portability outweighs startup latency and antivirus scanning.
+$directoryBuild = -not $SingleFile
 $bundleMode = if ($directoryBuild) { "--onedir" } else { "--onefile" }
 $windowMode = if ($DebugBuild) { "--console" } else { "--windowed" }
 $distPath = Join-Path $PSScriptRoot "dist"
@@ -36,7 +33,6 @@ $backendPath = Join-Path $PSScriptRoot "backend"
 $desktopEntryPath = Join-Path $PSScriptRoot "desktop.py"
 $promptsPath = Join-Path $backendPath "app\prompts"
 $searchTermsPath = Join-Path $backendPath "app\search_terms"
-$envPath = Join-Path $backendPath ".env"
 $tempBuildRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("SOC-Audit-Build-" + [guid]::NewGuid().ToString("N"))
 $frontendSourcePath = Join-Path $PSScriptRoot "frontend"
 $frontendWorkPath = Join-Path $tempBuildRoot "frontend"
@@ -98,7 +94,6 @@ try {
     $frontendDataArg = "{0}{1}frontend/dist" -f $frontendDistPath, $dataSeparator
     $promptsDataArg = "{0}{1}backend/app/prompts" -f $promptsPath, $dataSeparator
     $searchTermsDataArg = "{0}{1}backend/app/search_terms" -f $searchTermsPath, $dataSeparator
-    $envDataArg = "{0}{1}." -f $envPath, $dataSeparator
     $pyinstallerArgs = @(
         "--noconfirm"
         "--clean"
@@ -112,10 +107,11 @@ try {
         "--add-data", $frontendDataArg
         "--add-data", $promptsDataArg
         "--add-data", $searchTermsDataArg
-        "--add-data", $envDataArg
         "--collect-all", "pdfplumber"
         "--collect-all", "pdfminer"
         "--collect-all", "openpyxl"
+        "--collect-all", "webview"
+        "--hidden-import", "clr"
         "--collect-submodules", "uvicorn"
         $desktopEntryPath
     )
@@ -129,7 +125,7 @@ try {
         throw "PyInstaller reported success, but the expected output was not found at '$artifactPath'."
     }
 
-    if ($FolderBuild) {
+    if ($directoryBuild -and -not $DebugBuild) {
         if (Test-Path $deliveryZipPath) {
             Remove-Item $deliveryZipPath -Force
         }
