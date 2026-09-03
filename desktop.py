@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import socket
 import sys
@@ -26,6 +27,7 @@ from app.main import app
 
 
 HOST = "127.0.0.1"
+STARTUP_TIMEOUT_SECONDS = 20
 
 
 class DesktopApi:
@@ -94,25 +96,72 @@ class DesktopApi:
             return {"status": "error", "message": str(exc)}
 
 
-def _find_available_port() -> int:
-    """Ask the OS for an unused local port to avoid launch-time conflicts."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind((HOST, 0))
-        return int(sock.getsockname()[1])
+def _create_listener() -> socket.socket:
+    """Reserve a loopback port until Uvicorn has taken ownership of it.
+
+    Asking the operating system for an available port and closing it before
+    starting Uvicorn leaves a small but real race: another process can bind the
+    port in between. Passing an already-bound listener to Uvicorn removes that
+    launch-time failure mode.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((HOST, 0))
+    listener.listen(socket.SOMAXCONN)
+    return listener
 
 
-def _wait_for_server(url: str, attempts: int = 100) -> None:
-    # Do not let a corporate HTTP proxy intercept loopback health checks.
+def _wait_for_server(url: str, timeout_seconds: float = STARTUP_TIMEOUT_SECONDS) -> None:
+    """Wait for FastAPI and retain the last failure for the startup log."""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    for _ in range(attempts):
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
         try:
             with opener.open(f"{url}/health", timeout=0.5) as response:
                 if response.status == 200:
+                    logging.info("Local API server is ready at %s", url)
                     return
-        except Exception:
+        except Exception as exc:
+            last_error = exc
             time.sleep(0.1)
 
-    raise RuntimeError("The local API server did not start in time.")
+    raise RuntimeError(
+        f"The local API server did not start within {timeout_seconds:.0f} seconds. "
+        f"Last health-check error: {last_error}"
+    )
+
+
+def _start_webview(url: str, desktop_api: DesktopApi) -> None:
+    """Start only the modern Edge WebView2 renderer on Windows.
+
+    The React production bundle requires a current browser engine. Letting
+    pywebview fall back to the legacy MSHTML/IE renderer produces blank or
+    apparently frozen windows on machines without WebView2.
+    """
+    webview.settings["ALLOW_DOWNLOADS"] = True
+    window = webview.create_window(
+        "SOC Audit Automation",
+        url,
+        js_api=desktop_api,
+        width=1280,
+        height=850,
+        min_size=(1000, 650),
+    )
+    desktop_api.window = window
+    try:
+        webview.start(
+            gui="edgechromium" if sys.platform == "win32" else None,
+            storage_path=str(settings.root_dir / "webview"),
+            debug=os.environ.get("SOC_AUDIT_DEBUG") == "1",
+        )
+    except Exception as exc:
+        if sys.platform == "win32":
+            raise RuntimeError(
+                "The Microsoft Edge WebView2 Runtime could not be initialized. "
+                "Install or repair the Evergreen WebView2 Runtime, then try again."
+            ) from exc
+        raise
 
 
 def main() -> None:
@@ -123,39 +172,35 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    port = _find_available_port()
+    logging.info("Starting SOC Audit desktop application")
+    listener = _create_listener()
+    port = int(listener.getsockname()[1])
     url = f"http://{HOST}:{port}"
     server = uvicorn.Server(
         uvicorn.Config(
             app,
             host=HOST,
             port=port,
-            log_level="warning",
+            log_level="info",
             access_log=False,
         )
     )
-    server_thread = threading.Thread(target=server.run, daemon=True)
+    server_thread = threading.Thread(
+        target=lambda: server.run(sockets=[listener]),
+        name="soc-audit-api",
+        daemon=True,
+    )
     server_thread.start()
 
     try:
         _wait_for_server(url)
-        # Downloads are disabled by default in pywebview. Keep them enabled for
-        # browser-style fallback downloads in addition to the native Save As API.
-        webview.settings["ALLOW_DOWNLOADS"] = True
         desktop_api = DesktopApi()
-        window = webview.create_window(
-            "SOC Audit Automation",
-            url,
-            js_api=desktop_api,
-            width=1280,
-            height=850,
-            min_size=(1000, 650),
-        )
-        desktop_api.window = window
-        webview.start(storage_path=str(settings.root_dir / "webview"))
+        _start_webview(url, desktop_api)
     finally:
+        logging.info("Stopping SOC Audit desktop application")
         server.should_exit = True
         server_thread.join(timeout=5)
+        listener.close()
 
 
 def _report_fatal_error(error: Exception) -> None:
