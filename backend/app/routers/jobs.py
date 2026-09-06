@@ -110,10 +110,10 @@ def _bg_job(job_id: str, api_snapshot: dict) -> None:
 
             safe = _safe_filename_component(form_data.system_name or "", report_id[:8])
             output_filename = f"Form_107-A_{safe}_{report_id[:8]}.xlsx"
-            print(f"[JOB] Writing Excel to {output_filename}", flush=True)
+            logger.info("Writing Excel to %s", output_filename)
             write_excel(form_data, settings.outputs_dir / output_filename,
                         template_path=template_path)
-            print(f"[JOB] Excel written OK", flush=True)
+            logger.info("Excel written successfully")
 
             summary = ReportSummary(
                 system_name=form_data.system_name or "",
@@ -125,23 +125,22 @@ def _bg_job(job_id: str, api_snapshot: dict) -> None:
                 csoc_count=len(form_data.sheet9.csocs) if form_data.sheet9 else 0,
             )
 
-            print(f"[JOB] Updating status to DONE", flush=True)
+            logger.info("Updating report status to DONE")
             _update_report_in_job(job_id, report_id,
                                   status="DONE", progress=100, current_step="",
                                   output_filename=output_filename,
                                   summary=summary.model_dump())
-            print(f"[JOB] Status updated to DONE", flush=True)
+            logger.info("Report status updated to DONE")
 
         except Exception as exc:
-            print(f"[JOB] EXCEPTION: {exc}", flush=True)
             logger.exception("Job %s report %s failed: %s", job_id, report_id, exc)
             _update_report_in_job(job_id, report_id,
                                   status="FAILED", progress=0, current_step="",
                                   error=str(exc))
 
-    print(f"[JOB] Calling _finalize_job", flush=True)
+    logger.info("Finalizing job %s", job_id)
     _finalize_job(job_id)
-    print(f"[JOB] Done", flush=True)
+    logger.info("Job %s finished", job_id)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────

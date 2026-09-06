@@ -389,17 +389,19 @@ class RetrievalContext:
         }
         batches = _contiguous_batches(final_pages)
 
-        print(
-            f"[RETRIEVAL] profile={source.name} version={source.version} "
-            f"sha256={source.digest} topic={topic}",
-            flush=True,
+        logger.info(
+            "profile=%s version=%s sha256=%s topic=%s",
+            source.name,
+            source.version,
+            source.digest,
+            topic,
         )
-        print(f"[RETRIEVAL] toc_pages={valid_toc_pages}", flush=True)
-        print(f"[RETRIEVAL] keyword_pages={sorted(direct_keyword_pages)}", flush=True)
+        logger.info("toc_pages=%s", valid_toc_pages)
+        logger.info("keyword_pages=%s", sorted(direct_keyword_pages))
         for keyword, matches in bm25_query_pages.items():
-            print(f"[RETRIEVAL] bm25 keyword={keyword!r} pages={matches}", flush=True)
-        print(f"[RETRIEVAL] union_pages={union_pages}", flush=True)
-        print(f"[RETRIEVAL] expanded_pages={final_pages} batches={batches}", flush=True)
+            logger.info("bm25 keyword=%r pages=%s", keyword, matches)
+        logger.info("union_pages=%s", union_pages)
+        logger.info("expanded_pages=%s batches=%s", final_pages, batches)
 
         return RetrievalResult(
             topic=topic,

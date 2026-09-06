@@ -307,10 +307,7 @@ def _collect_sheet8_candidate_section(
                 candidates.add(page_number)
 
     candidate_pages = sorted(candidates)
-    print(
-        f"[EXTRACTOR] Sheet 8 candidate pages: {candidate_pages}",
-        flush=True,
-    )
+    logger.info("Sheet 8 candidate pages: %s", candidate_pages)
     return _format_pages(pages, candidate_pages, pdf_to_report_page)
 
 
@@ -332,9 +329,11 @@ def _extract_sheet3(llm_client: LLMClient, text: str) -> Sheet3Data:
 
 
 def _extract_sheet6(llm_client: LLMClient, cm: str, am: str, js: str, report_label: str) -> Sheet6Data:
-    print(
-        f"[EXTRACTOR] Sheet 6 input chars: cm={len(cm)}, am={len(am)}, js={len(js)}",
-        flush=True,
+    logger.info(
+        "Sheet 6 input characters: cm=%d, am=%d, js=%d",
+        len(cm),
+        len(am),
+        len(js),
     )
     raw = llm_client.call_json(
         _prompt("sheet6_itgc.txt", report_label=report_label, cm_text=cm, am_text=am, js_text=js)
@@ -775,11 +774,11 @@ def _prepare_sheet8_text(text: str) -> tuple[str, list[CUECItem]]:
 
 def _extract_sheet8(llm_client: LLMClient, text: str) -> Sheet8Data:
     prepared_text, deterministic_cuecs = _prepare_sheet8_text(text)
-    print(
-        "[EXTRACTOR] Sheet 8 input chars: "
-        f"raw={len(text)}, prepared={len(prepared_text)}, "
-        f"deterministic_cuecs={len(deterministic_cuecs)}",
-        flush=True,
+    logger.info(
+        "Sheet 8 input characters: raw=%d, prepared=%d, deterministic_cuecs=%d",
+        len(text),
+        len(prepared_text),
+        len(deterministic_cuecs),
     )
 
     if len(deterministic_cuecs) >= 2:
@@ -817,15 +816,19 @@ def _clean_sheet8_cuecs(llm_client: LLMClient, cuecs: list[CUECItem]) -> list[CU
             if not isinstance(returned, list):
                 raise ValueError("Sheet 8 clean response must be a JSON object or array")
         except Exception as exc:
-            print(f"[EXTRACTOR] Sheet 8 clean failed, keeping original chunk: {exc}", flush=True)
+            logger.warning(
+                "Sheet 8 clean failed; keeping original chunk: %s",
+                exc,
+            )
             cleaned.extend(chunk)
             continue
 
         if len(returned) != len(chunk):
-            print(
-                "[EXTRACTOR] Sheet 8 clean count mismatch, keeping original chunk: "
-                f"expected={len(chunk)}, got={len(returned)}",
-                flush=True,
+            logger.warning(
+                "Sheet 8 clean count mismatch; keeping original chunk: "
+                "expected=%d, got=%d",
+                len(chunk),
+                len(returned),
             )
             cleaned.extend(chunk)
             continue
@@ -849,12 +852,15 @@ def _clean_sheet8_cuecs(llm_client: LLMClient, cuecs: list[CUECItem]) -> list[CU
         if valid:
             cleaned.extend(chunk_cleaned)
         else:
-            print("[EXTRACTOR] Sheet 8 clean index mismatch, keeping original chunk", flush=True)
+            logger.warning(
+                "Sheet 8 clean index mismatch; keeping original chunk"
+            )
             cleaned.extend(chunk)
 
-    print(
-        f"[EXTRACTOR] Sheet 8 cleaned CUECs: input={len(cuecs)}, output={len(cleaned)}",
-        flush=True,
+    logger.info(
+        "Sheet 8 cleaned CUECs: input=%d, output=%d",
+        len(cuecs),
+        len(cleaned),
     )
     return cleaned
 
@@ -926,11 +932,15 @@ def extract(
 
     _cb("Locating sections (TOC)", _STEP_PCT["toc"][0])
     toc = _parse_toc(llm_client, pages)
-    print(f"[EXTRACTOR] TOC: system={toc.system_name}, opinion={toc.opinion_pages}, cm={toc.change_mgmt_pages}", flush=True)
-    print(
-        "[EXTRACTOR] Page map sample: "
-        f"{dict(list(sorted(report_to_pdf_page.items()))[:8])}",
-        flush=True,
+    logger.info(
+        "TOC: system=%s, opinion=%s, cm=%s",
+        toc.system_name,
+        toc.opinion_pages,
+        toc.change_mgmt_pages,
+    )
+    logger.info(
+        "Page map sample: %s",
+        dict(list(sorted(report_to_pdf_page.items()))[:8]),
     )
     _cb("Sections located", _STEP_PCT["toc"][1])
 
@@ -1052,3 +1062,4 @@ def extract(
         _cb("Sheet 9 done", _STEP_PCT[9][1])
 
     return result
+
