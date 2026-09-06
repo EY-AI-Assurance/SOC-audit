@@ -170,6 +170,8 @@ def main() -> None:
         filename=log_path,
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        encoding="utf-8",
+        errors="backslashreplace",
     )
 
     logging.info("Starting SOC Audit desktop application")
